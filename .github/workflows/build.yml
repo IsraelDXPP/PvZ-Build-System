@@ -1,0 +1,1425 @@
+# CI build for the PUBLIC build-system repo.
+#
+# This workflow checks out the PRIVATE source repo and builds all targets.
+# The source repo must be accessible via the PRIVATE_SOURCE_TOKEN secret
+# (fine-grained PAT with Contents: Read permission on the source repo).
+#
+# Setup:
+#   1. Create a fine-grained PAT with Contents: Read on your source repo
+#   2. Add it as PRIVATE_SOURCE_TOKEN in this repo's Settings > Secrets
+#   3. Update SOURCE_REPO env below to point to your private source repo
+#   4. Delete ci.yml and ci-uwp.yml from the source repo (builds now run here)
+#   5. Keep sync-upstream.yml in the source repo
+
+name: CI build
+
+on:
+  workflow_dispatch:
+    inputs:
+      source-ref:
+        description: 'Branch or tag of the source repo to build'
+        required: true
+        default: 'widescreen-mp'
+  push:
+    branches: [ "main" ]
+    tags: [ "*" ]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # CHANGE THIS to your private source repo (owner/repo format)
+  SOURCE_REPO: IsraelDXPP/PvZ-PortableNT
+  # vcpkg binary cache; restored/saved per-OS via actions/cache below
+  VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/vcpkg-cache,readwrite
+
+jobs:
+  build-archlinux:
+    name: Build for Arch Linux (x86_64)
+    runs-on: ubuntu-latest
+    container: archlinux:base-devel
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        repository: ${{ env.SOURCE_REPO }}
+        token: ${{ secrets.PRIVATE_SOURCE_TOKEN }}
+        ref: ${{ inputs.source-ref || github.ref_name }}
+        fetch-depth: 0
+
+    - name: Install Base Dependencies
+      run: |
+        pacman -Syu --noconfirm
+        pacman -S --noconfirm \
+          cmake \
+          libjpeg-turbo \
+          libogg \
+          libopenmpt \
+          libpng \
+          libvorbis \
+          mpg123 \
+          ninja \
+          sdl2-compat \
+          sudo
+
+    - name: Create Builder User
+      run: |
+        useradd -m builder
+        echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
+        chmod 0440 /etc/sudoers.d/builder
+
+    - name: Fix Directory Permissions
+      run: |
+        chown -R builder:builder .
+
+    - name: Build PvZ-Portable
+      run: |
+        sudo -u builder bash -lc '
+          mkdir build
+          cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release
+          cmake --build build
+
+          mkdir -p dist
+          cp build/pvz-portable dist/
+          strip dist/pvz-portable
+        '
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: pvz-portable-archlinux
+        path: dist/
+
+  build-linux-static:
+    name: Build for Linux (x86_64, static)
+    runs-on: ubuntu-latest
+    container: quay.io/pypa/manylinux_2_34_x86_64
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        repository: ${{ env.SOURCE_REPO }}
+        token: ${{ secrets.PRIVATE_SOURCE_TOKEN }}
+        ref: ${{ inputs.source-ref || github.ref_name }}
+        fetch-depth: 0
+
+    - name: Fix Git Safe Directory
+      run: git config --global --add safe.directory "$GITHUB_WORKSPACE"
+
+    - name: Install Dependencies
+      run: |
+        dnf install -y \
+          alsa-lib-devel \
+          libdecor-devel \
+          libXcursor-devel \
+          libXext-devel \
+          libXi-devel \
+          libXrandr-devel \
+          libXScrnSaver-devel \
+          libxkbcommon-devel \
+          mesa-libGL-devel \
+          nasm \
+          ninja-build \
+          pipewire-devel \
+          pkgconf-pkg-config \
+          pulseaudio-libs-devel \
+          wayland-devel \
+          wget \
+          zlib-devel \
+          zlib-static
+
+    - name: Resolve Dep Versions
+      run: |
+        SDL2_TAG=$(git ls-remote --tags https://github.com/libsdl-org/SDL.git 'refs/tags/release-2.*' \
+          | sed 's|.*refs/tags/release-||' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+        if [ -z "$SDL2_TAG" ]; then
+          SDL2_TAG="2.32.10"
+        fi
+        echo "SDL2_TAG=$SDL2_TAG" >> "$GITHUB_ENV"
+
+        OPENMPT_TAG=$(git ls-remote --tags https://github.com/OpenMPT/openmpt.git 'refs/tags/libopenmpt-*' \
+          | sed 's|.*refs/tags/libopenmpt-||' \
+          | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+        if [ -z "$OPENMPT_TAG" ]; then
+          OPENMPT_TAG="0.8.4"
+        fi
+        echo "OPENMPT_TAG=$OPENMPT_TAG" >> "$GITHUB_ENV"
+
+        MPG123_VERSION=$(wget -qO- https://sourceforge.net/projects/mpg123/best_release.json \
+          | grep -oE 'mpg123-[0-9]+\.[0-9]+\.[0-9]+' | head -1 | sed 's/mpg123-//' || true)
+        if [ -z "$MPG123_VERSION" ]; then
+          MPG123_VERSION="1.33.7"
+        fi
+        echo "MPG123_VERSION=$MPG123_VERSION" >> "$GITHUB_ENV"
+
+        LIBPNG_VERSION=$(git ls-remote --tags https://github.com/pnggroup/libpng.git 'refs/tags/v1.6.*' \
+          | sed 's|.*refs/tags/v||' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+        if [ -z "$LIBPNG_VERSION" ]; then
+          LIBPNG_VERSION="1.6.58"
+        fi
+        echo "LIBPNG_VERSION=$LIBPNG_VERSION" >> "$GITHUB_ENV"
+
+        JPEG_TURBO_VERSION=$(git ls-remote --tags https://github.com/libjpeg-turbo/libjpeg-turbo.git 'refs/tags/[0-9]*' \
+          | sed 's|.*refs/tags/||' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+        if [ -z "$JPEG_TURBO_VERSION" ]; then
+          JPEG_TURBO_VERSION="3.1.3"
+        fi
+        echo "JPEG_TURBO_VERSION=$JPEG_TURBO_VERSION" >> "$GITHUB_ENV"
+
+        OGG_VERSION=$(git ls-remote --tags https://github.com/xiph/libogg.git 'refs/tags/v*' \
+          | sed 's|.*refs/tags/v||' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+        if [ -z "$OGG_VERSION" ]; then
+          OGG_VERSION="1.3.6"
+        fi
+        echo "OGG_VERSION=$OGG_VERSION" >> "$GITHUB_ENV"
+
+        VORBIS_VERSION=$(git ls-remote --tags https://github.com/xiph/vorbis.git 'refs/tags/v*' \
+          | sed 's|.*refs/tags/v||' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+        if [ -z "$VORBIS_VERSION" ]; then
+          VORBIS_VERSION="1.3.7"
+        fi
+        echo "VORBIS_VERSION=$VORBIS_VERSION" >> "$GITHUB_ENV"
+
+        echo "Using SDL2 $SDL2_TAG, libopenmpt $OPENMPT_TAG, mpg123 $MPG123_VERSION,"
+        echo "libpng $LIBPNG_VERSION, libjpeg-turbo $JPEG_TURBO_VERSION, libogg $OGG_VERSION, libvorbis $VORBIS_VERSION"
+
+    - name: Restore Source-Built Deps Cache
+      id: deps-cache
+      uses: actions/cache/restore@v6
+      with:
+        path: ~/pvz-deps
+        key: linux-static-deps-v3-${{ env.SDL2_TAG }}-${{ env.OPENMPT_TAG }}-${{ env.MPG123_VERSION }}-${{ env.LIBPNG_VERSION }}-${{ env.JPEG_TURBO_VERSION }}-${{ env.OGG_VERSION }}-${{ env.VORBIS_VERSION }}
+
+    - name: Build SDL2 (static)
+      if: steps.deps-cache.outputs.cache-hit != 'true'
+      run: |
+        wget -q "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_TAG}/SDL2-${SDL2_TAG}.tar.gz"
+        tar xf "SDL2-${SDL2_TAG}.tar.gz"
+        cmake -G Ninja -B build-sdl2 \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX="$HOME/pvz-deps" \
+          -DSDL_SHARED=OFF \
+          -DSDL_STATIC=ON \
+          -DSDL_TEST=OFF \
+          -DSDL_KMSDRM=OFF \
+          -DSDL_JACK=OFF \
+          -DSDL_SNDIO=OFF \
+          -DSDL_DBUS=OFF \
+          -DSDL_IBUS=OFF \
+          -DSDL_LIBUDEV=OFF \
+          -DSDL_LIBSAMPLERATE=OFF \
+          -DSDL_SYSTEM_ICONV=OFF \
+          "SDL2-${SDL2_TAG}"
+        cmake --build build-sdl2 -j$(nproc)
+        cmake --install build-sdl2
+
+    - name: Build libopenmpt (static)
+      if: steps.deps-cache.outputs.cache-hit != 'true'
+      run: |
+        git clone --depth=1 --branch "libopenmpt-${OPENMPT_TAG}" https://github.com/OpenMPT/openmpt.git libopenmpt-src
+        cd libopenmpt-src
+        make CONFIG=gcc \
+          STATIC_LIB=1 SHARED_LIB=0 \
+          EXAMPLES=0 OPENMPT123=0 TEST=0 \
+          NO_ZLIB=1 NO_MPG123=1 NO_OGG=1 NO_VORBIS=1 NO_VORBISFILE=1 \
+          NO_PORTAUDIO=1 NO_PORTAUDIOCPP=1 NO_PULSEAUDIO=1 \
+          NO_SDL2=1 NO_FLAC=1 NO_SNDFILE=1 \
+          -j$(nproc)
+        make CONFIG=gcc \
+          STATIC_LIB=1 SHARED_LIB=0 \
+          EXAMPLES=0 OPENMPT123=0 TEST=0 \
+          PREFIX="$HOME/pvz-deps" install
+
+    - name: Build mpg123 (static)
+      if: steps.deps-cache.outputs.cache-hit != 'true'
+      run: |
+        wget -qO mpg123.tar.bz2 "https://downloads.sourceforge.net/project/mpg123/mpg123/${MPG123_VERSION}/mpg123-${MPG123_VERSION}.tar.bz2"
+        mkdir -p mpg123-src
+        tar xf mpg123.tar.bz2 -C mpg123-src --strip-components=1
+        cd mpg123-src
+        ./configure --prefix="$HOME/pvz-deps" --enable-static --disable-shared \
+          --disable-components --enable-libmpg123
+        make -j$(nproc)
+        make install
+
+    - name: Build Codec Libraries (static)
+      if: steps.deps-cache.outputs.cache-hit != 'true'
+      run: |
+        git clone --depth=1 --branch "v${LIBPNG_VERSION}" https://github.com/pnggroup/libpng.git libpng-src
+        cmake -G Ninja -B build-libpng libpng-src \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX="$HOME/pvz-deps" \
+          -DPNG_SHARED=OFF \
+          -DPNG_STATIC=ON \
+          -DPNG_EXECUTABLES=OFF \
+          -DPNG_TESTS=OFF
+        cmake --build build-libpng -j$(nproc)
+        cmake --install build-libpng
+
+        git clone --depth=1 --branch "${JPEG_TURBO_VERSION}" https://github.com/libjpeg-turbo/libjpeg-turbo.git libjpeg-turbo-src
+        cmake -G Ninja -B build-jpeg libjpeg-turbo-src \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_INSTALL_PREFIX="$HOME/pvz-deps" \
+          -DENABLE_SHARED=OFF \
+          -DENABLE_STATIC=ON \
+          -DWITH_TURBOJPEG=OFF
+        cmake --build build-jpeg -j$(nproc)
+        cmake --install build-jpeg
+
+        wget -qO libogg.tar.gz "https://downloads.xiph.org/releases/ogg/libogg-${OGG_VERSION}.tar.gz"
+        mkdir -p libogg-src
+        tar xf libogg.tar.gz -C libogg-src --strip-components=1
+        cd libogg-src
+        ./configure --prefix="$HOME/pvz-deps" --enable-static --disable-shared
+        make -j$(nproc)
+        make install
+        cd ..
+
+        wget -qO libvorbis.tar.gz "https://downloads.xiph.org/releases/vorbis/libvorbis-${VORBIS_VERSION}.tar.gz"
+        mkdir -p libvorbis-src
+        tar xf libvorbis.tar.gz -C libvorbis-src --strip-components=1
+        cd libvorbis-src
+        PKG_CONFIG_PATH="$HOME/pvz-deps/lib/pkgconfig" \
+          ./configure --prefix="$HOME/pvz-deps" --enable-static --disable-shared
+        make -j$(nproc)
+        make install
+
+    - name: Save Source-Built Deps Cache
+      if: steps.deps-cache.outputs.cache-hit != 'true'
+      uses: actions/cache/save@v6
+      with:
+        path: ~/pvz-deps
+        key: linux-static-deps-v3-${{ env.SDL2_TAG }}-${{ env.OPENMPT_TAG }}-${{ env.MPG123_VERSION }}-${{ env.LIBPNG_VERSION }}-${{ env.JPEG_TURBO_VERSION }}-${{ env.OGG_VERSION }}-${{ env.VORBIS_VERSION }}
+
+    - name: Build PvZ-Portable
+      run: |
+        cmake -G Ninja -B build \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_STATIC=ON \
+          -DCMAKE_EXE_LINKER_FLAGS="-static-libgcc -static-libstdc++" \
+          -DCMAKE_PREFIX_PATH="$HOME/pvz-deps"
+        cmake --build build
+
+        mkdir -p dist
+        cp build/pvz-portable dist/
+        strip dist/pvz-portable
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: pvz-portable-linux-static
+        path: dist/
+
+  build-windows-msys2-ucrt64:
+    name: Build for Windows (MSYS2 UCRT64)
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        repository: ${{ env.SOURCE_REPO }}
+        token: ${{ secrets.PRIVATE_SOURCE_TOKEN }}
+        ref: ${{ inputs.source-ref || github.ref_name }}
+        fetch-depth: 0
+
+    - uses: msys2/setup-msys2@v2
+      with:
+        msystem: UCRT64
+        update: true
+        install: >-
+          base-devel
+          mingw-w64-ucrt-x86_64-cmake
+          mingw-w64-ucrt-x86_64-gcc
+          mingw-w64-ucrt-x86_64-libjpeg-turbo
+          mingw-w64-ucrt-x86_64-libopenmpt
+          mingw-w64-ucrt-x86_64-libogg
+          mingw-w64-ucrt-x86_64-libpng
+          mingw-w64-ucrt-x86_64-libvorbis
+          mingw-w64-ucrt-x86_64-mpg123
+          mingw-w64-ucrt-x86_64-ninja
+          mingw-w64-ucrt-x86_64-SDL2
+
+    - name: Compile PvZ-Portable for Windows
+      shell: msys2 {0}
+      run: |
+        mkdir build
+        cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release -DCONSOLE=OFF -DBUILD_STATIC=ON -DCMAKE_COLOR_DIAGNOSTICS=ON
+        cmake --build build
+
+        mkdir -p dist
+        cp build/pvz-portable.exe dist/
+        strip dist/pvz-portable.exe
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: pvz-portable-windows-msys2-ucrt64
+        path: dist/
+
+  build-windows-msvc-x64:
+    name: Build for Windows (MSVC x64)
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        repository: ${{ env.SOURCE_REPO }}
+        token: ${{ secrets.PRIVATE_SOURCE_TOKEN }}
+        ref: ${{ inputs.source-ref || github.ref_name }}
+        fetch-depth: 0
+
+    - uses: ilammy/msvc-dev-cmd@v1
+
+    - name: Get toolchain ID for cache key
+      shell: pwsh
+      run: |
+        $tc = $env:VCToolsVersion
+        if (-not $tc) { $tc = "unknown" }
+        echo "VCPKG_TC=msvc-$tc" >> $env:GITHUB_ENV
+
+    - name: Restore vcpkg binary cache
+      uses: actions/cache@v6
+      with:
+        path: vcpkg-cache
+        key: vcpkg-windows-x64-${{ env.VCPKG_TC }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+        restore-keys: |
+          vcpkg-windows-x64-${{ env.VCPKG_TC }}-
+          vcpkg-windows-x64-
+
+    - name: Install Ninja
+      run: choco install ninja -y
+
+    - name: Setup vcpkg (manifest mode)
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgJsonGlob: vcpkg.json
+
+    - name: Compile PvZ-Portable for Windows (MSVC)
+      shell: pwsh
+      run: |
+        cmake -G "Ninja" -B build -DCMAKE_BUILD_TYPE=Release -DCONSOLE=OFF -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static
+        cmake --build build
+
+        New-Item -ItemType Directory -Force -Path dist | Out-Null
+        Copy-Item build/pvz-portable.exe dist/
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: pvz-portable-windows-msvc-x64
+        path: dist/
+
+  build-windows-msvc-x86:
+    name: Build for Windows (MSVC x86)
+    runs-on: windows-latest
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        repository: ${{ env.SOURCE_REPO }}
+        token: ${{ secrets.PRIVATE_SOURCE_TOKEN }}
+        ref: ${{ inputs.source-ref || github.ref_name }}
+        fetch-depth: 0
+
+    - uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x86
+
+    - name: Get toolchain ID for cache key
+      shell: pwsh
+      run: |
+        $tc = $env:VCToolsVersion
+        if (-not $tc) { $tc = "unknown" }
+        echo "VCPKG_TC=msvc-$tc" >> $env:GITHUB_ENV
+
+    - name: Restore vcpkg binary cache
+      uses: actions/cache@v6
+      with:
+        path: vcpkg-cache
+        key: vcpkg-windows-x86-${{ env.VCPKG_TC }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+        restore-keys: |
+          vcpkg-windows-x86-${{ env.VCPKG_TC }}-
+          vcpkg-windows-x86-
+
+    - name: Install Ninja
+      run: choco install ninja -y
+
+    - name: Setup vcpkg (manifest mode)
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgJsonGlob: vcpkg.json
+
+    - name: Compile PvZ-Portable for Windows (MSVC)
+      shell: pwsh
+      run: |
+        cmake -G "Ninja" -B build -DCMAKE_BUILD_TYPE=Release -DCONSOLE=OFF -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x86-windows-static
+        cmake --build build
+
+        New-Item -ItemType Directory -Force -Path dist | Out-Null
+        Copy-Item build/pvz-portable.exe dist/
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: pvz-portable-windows-msvc-x86
+        path: dist/
+
+  build-windows-uwp:
+    name: Build for Windows (UWP x64)
+    runs-on: windows-2022
+    env:
+      VCPKG_DEFAULT_TRIPLET: x64-uwp
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        repository: ${{ env.SOURCE_REPO }}
+        token: ${{ secrets.PRIVATE_SOURCE_TOKEN }}
+        ref: ${{ inputs.source-ref || github.ref_name }}
+        fetch-depth: 0
+
+    - name: Set up MSVC UWP environment
+      uses: ilammy/msvc-dev-cmd@v1
+      with:
+        arch: x64
+        uwp: true
+
+    - name: Get toolchain ID for cache key
+      shell: pwsh
+      run: |
+        $tc = $env:VCToolsVersion
+        if (-not $tc) { $tc = "unknown" }
+        echo "VCPKG_TC=msvc-uwp-$tc" >> $env:GITHUB_ENV
+
+    - name: Ensure UWP C++ workload
+      shell: pwsh
+      run: |
+        $vs = "C:\Program Files\Microsoft Visual Studio\2022\Enterprise"
+        $xamlTargets = "$vs\MSBuild\Microsoft\WindowsXaml"
+        if (-not (Test-Path $xamlTargets)) {
+          $installer = "C:\Program Files (x86)\Microsoft Visual Studio\Installer\vs_installer.exe"
+          if (-not (Test-Path $installer)) { throw "vs_installer not found" }
+          & $installer modify --installPath $vs `
+            --add Microsoft.VisualStudio.Workload.Universal `
+            --quiet --norestart
+          if ($LASTEXITCODE -ne 0) { throw "vs_installer modify failed" }
+        } else {
+          Write-Host "UWP workload already present"
+        }
+
+    - name: Install Ninja
+      run: choco install ninja -y
+
+    - name: Restore vcpkg binary cache
+      uses: actions/cache@v6
+      with:
+        path: vcpkg-cache
+        key: vcpkg-uwp-x64-${{ env.VCPKG_TC }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+        restore-keys: |
+          vcpkg-uwp-x64-${{ env.VCPKG_TC }}-
+          vcpkg-uwp-x64-
+
+    - name: Setup vcpkg (manifest mode, x64-uwp triplet)
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgJsonGlob: vcpkg.json
+        runVcpkgInstall: true
+        doNotCache: false
+
+    - name: Configure (WindowsStore / UWP toolchain)
+      shell: pwsh
+      run: |
+        cmake -G Ninja -B build-uwp `
+          -DCMAKE_SYSTEM_NAME=WindowsStore `
+          -DCMAKE_SYSTEM_VERSION=10.0 `
+          -DCMAKE_BUILD_TYPE=Release `
+          -DCONSOLE=OFF `
+          -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" `
+          -DVCPKG_TARGET_TRIPLET=x64-uwp
+        if ($LASTEXITCODE -ne 0) { throw "cmake configure failed" }
+
+    - name: Build
+      shell: pwsh
+      run: |
+        cmake --build build-uwp --config Release
+        if ($LASTEXITCODE -ne 0) { throw "cmake build failed" }
+
+    - name: Stage artifacts
+      shell: pwsh
+      run: |
+        New-Item -ItemType Directory -Force -Path dist | Out-Null
+        Copy-Item build-uwp/pvz-portable.exe dist/
+        Copy-Item build-uwp/uwp/Package.appxmanifest dist/
+        Copy-Item -Recurse uwp/Assets dist/Assets
+        Copy-Item "build-uwp/vcpkg_installed/x64-uwp/bin/*.dll" dist/
+        $vclibsAppx = $null
+        $vclibsRoot = "C:\Program Files (x86)\Microsoft SDKs\Windows Kits\10\ExtensionSDKs\Microsoft.VCLibs"
+        if (Test-Path $vclibsRoot) {
+          $vclibsAppx = Get-ChildItem $vclibsRoot -Recurse -Filter "Microsoft.VCLibs.*.appx" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match 'x64' -and $_.Name -notmatch 'Debug|UWPDesktop' } |
+            Sort-Object LastWriteTime -Descending |
+            Select-Object -First 1
+        }
+        if (-not $vclibsAppx) {
+          Write-Host "VCLibs ExtensionSDK appx not found; downloading via winget..."
+          $dlDir = "$env:RUNNER_TEMP\vclibs-dl"
+          winget download --id Microsoft.VCLibs.14 -e --architecture x64 --accept-source-agreements --download-directory $dlDir | Out-Null
+          $zip = Get-ChildItem $dlDir -Recurse -Filter *.zip -ErrorAction SilentlyContinue | Select-Object -First 1
+          if (-not $zip) { throw "winget VCLibs download produced no archive" }
+          $ex = "$env:RUNNER_TEMP\vclibs-x"
+          Expand-Archive -LiteralPath $zip.FullName -DestinationPath $ex -Force
+          $vclibsAppx = Get-ChildItem $ex -Recurse -Filter "Microsoft.VCLibs.140.00_*.appx" -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match 'x64' -and $_.Name -notmatch 'Debug|UWPDesktop' } |
+            Select-Object -First 1
+        }
+        if (-not $vclibsAppx) { throw "Microsoft.VCLibs UWP framework appx not found" }
+        $crtUnpack = "$env:RUNNER_TEMP\vclibs-crt"
+        New-Item -ItemType Directory -Force -Path $crtUnpack | Out-Null
+        Expand-Archive -LiteralPath $vclibsAppx.FullName -DestinationPath $crtUnpack -Force
+        $crtNames = @('vcruntime140_app.dll', 'vcruntime140_1_app.dll',
+          'msvcp140_app.dll', 'msvcp140_1_app.dll', 'msvcp140_2_app.dll',
+          'concrt140_app.dll', 'vccorlib140_app.dll')
+        $crtDlls = @()
+        foreach ($n in $crtNames) {
+          $f = Get-ChildItem $crtUnpack -Recurse -Filter $n -ErrorAction SilentlyContinue |
+            Select-Object -First 1
+          if ($f) { $crtDlls += $f }
+        }
+        if (-not $crtDlls) { throw "no UWP CRT DLLs found in VCLibs appx" }
+        $crtDlls | ForEach-Object { Copy-Item $_.FullName dist/ }
+        if (-not (Get-ChildItem dist -Filter *.dll)) { throw "no DLLs staged" }
+        $d3d = "C:\Program Files (x86)\Windows Kits\10\Redist\D3D\x64\d3dcompiler_47.dll"
+        if (-not (Test-Path $d3d)) { throw "d3dcompiler_47.dll not found in Windows Kits" }
+        Copy-Item $d3d dist/
+        Get-ChildItem dist | Sort-Object Name | Select-Object Name, Length
+
+    - name: Build and sign AppX
+      shell: pwsh
+      env:
+        PVZ_UWP_SIGN_PFX: ${{ secrets.PVZ_UWP_SIGN_PFX }}
+        PVZ_UWP_SIGN_PASS: ${{ secrets.PVZ_UWP_SIGN_PASS }}
+      run: |
+        $sdk = "C:\Program Files (x86)\Windows Kits\10\bin"
+        $makeappx = Get-ChildItem $sdk -Recurse -Filter makeappx.exe -ErrorAction SilentlyContinue |
+          Where-Object { $_.FullName -match '\\x64\\' } |
+          Sort-Object FullName -Descending |
+          Select-Object -First 1
+        $signtool = Get-ChildItem $sdk -Recurse -Filter signtool.exe -ErrorAction SilentlyContinue |
+          Where-Object { $_.FullName -match '\\x64\\' } |
+          Sort-Object FullName -Descending |
+          Select-Object -First 1
+        if (-not $makeappx -or -not $signtool) { throw "Windows SDK bin tools not found" }
+        $appxDir = "appx"
+        New-Item -ItemType Directory -Force -Path $appxDir | Out-Null
+        Copy-Item dist/* $appxDir/ -Recurse
+        Move-Item "$appxDir/Package.appxmanifest" "$appxDir/AppxManifest.xml" -Force
+        [xml]$m = Get-Content "$appxDir/AppxManifest.xml"
+        $pkgName = $m.Package.Identity.Name
+        $pkgVer = $m.Package.Identity.Version
+        $appxFile = "$appxDir/${pkgName}_${pkgVer}_x64.appx"
+        & $makeappx.FullName pack /d $appxDir /p $appxFile /o
+        if ($LASTEXITCODE -ne 0) { throw "makeappx pack failed" }
+        $pfxPass = $env:PVZ_UWP_SIGN_PASS
+        if (-not $env:PVZ_UWP_SIGN_PFX) {
+          Write-Host "No PVZ_UWP_SIGN_PFX secret: generating a throwaway self-signed cert."
+          $cert = New-SelfSignedCertificate -Type CodeSigningCert -Subject "CN=$pkgName" -CertStoreLocation Cert:\CurrentUser\My
+          $pfxPass = [Guid]::NewGuid().ToString("N")
+          $sec = ConvertTo-SecureString -String $pfxPass -Force -AsPlainText
+          Export-PfxCertificate -Cert $cert -FilePath sign.pfx -Password $sec -Force | Out-Null
+        } else {
+          [IO.File]::WriteAllBytes("sign.pfx", [Convert]::FromBase64String($env:PVZ_UWP_SIGN_PFX))
+        }
+        & $signtool.FullName sign /f sign.pfx /p $pfxPass /fd SHA256 /a $appxFile
+        if ($LASTEXITCODE -ne 0) { throw "signtool sign failed" }
+        Copy-Item uwp/certs/PvZPortableDev.cer $appxDir/
+        Get-ChildItem $appxDir | Sort-Object Name | Select-Object Name, Length
+
+    - name: Upload UWP build artifacts
+      uses: actions/upload-artifact@v7
+      with:
+        name: pvz-portable-uwp-x64
+        path: dist/
+        if-no-files-found: error
+
+    - name: Upload signed AppX
+      uses: actions/upload-artifact@v7
+      with:
+        name: pvz-portable-uwp-appx
+        path: appx/
+        if-no-files-found: error
+
+  build-macos:
+    name: Build for macOS (aarch64)
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        repository: ${{ env.SOURCE_REPO }}
+        token: ${{ secrets.PRIVATE_SOURCE_TOKEN }}
+        ref: ${{ inputs.source-ref || github.ref_name }}
+        fetch-depth: 0
+
+    - name: Install Dependencies
+      run: |
+        brew update
+        brew install cmake \
+          dylibbundler \
+          jpeg-turbo \
+          libogg \
+          libopenmpt \
+          libpng \
+          libvorbis \
+          mpg123 \
+          ninja \
+          sdl2
+
+    - name: Build PvZ-Portable
+      run: |
+        mkdir build
+        cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release
+        cmake --build build
+
+        mkdir -p dist
+        mkdir -p dist/libs
+        cp build/pvz-portable dist/
+        strip -x dist/pvz-portable
+
+        echo "Bundling dependencies..."
+        dylibbundler -of -b -x dist/pvz-portable -d dist/libs -p @executable_path/libs/
+
+        install -m 755 "$(brew --prefix sdl3)/lib/libSDL3.dylib" dist/libs/libSDL3.dylib
+
+        codesign --force --deep -s - dist/pvz-portable
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: pvz-portable-macos
+        path: dist/
+
+  build-android:
+    name: Build for Android (arm64-v8a)
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_API: "24"
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        repository: ${{ env.SOURCE_REPO }}
+        token: ${{ secrets.PRIVATE_SOURCE_TOKEN }}
+        ref: ${{ inputs.source-ref || github.ref_name }}
+        fetch-depth: 0
+
+    - name: Set up JDK
+      uses: actions/setup-java@v5
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+
+    - name: Set up Android SDK
+      uses: android-actions/setup-android@v4
+
+    - name: Install Android NDK
+      run: |
+        if [ -n "$ANDROID_NDK_LATEST_HOME" ] && [ -d "$ANDROID_NDK_LATEST_HOME" ]; then
+          echo "ANDROID_NDK=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          echo "Using pre-installed NDK: $ANDROID_NDK_LATEST_HOME"
+        else
+          yes | sdkmanager --install "ndk;$(sdkmanager --list 2>/dev/null | grep -oP 'ndk;\K[\d.]+' | sort -V | tail -1)" || true
+          NDK_DIR=$(ls -d "$ANDROID_HOME"/ndk/*/ 2>/dev/null | sort -V | tail -1)
+          echo "ANDROID_NDK=${NDK_DIR%/}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=${NDK_DIR%/}" >> "$GITHUB_ENV"
+        fi
+
+    - name: Download SDL2 Source
+      run: |
+        SDL2_TAG=$(git ls-remote --tags https://github.com/libsdl-org/SDL.git 'refs/tags/release-2.*' \
+          | sed 's|.*refs/tags/release-||' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+        if [ -z "$SDL2_TAG" ]; then
+          SDL2_TAG="2.32.10"
+        fi
+        echo "Using SDL2 version: $SDL2_TAG"
+        wget -q "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_TAG}/SDL2-${SDL2_TAG}.tar.gz"
+        tar xf "SDL2-${SDL2_TAG}.tar.gz"
+        mv "SDL2-${SDL2_TAG}" sdl2-src
+
+    - name: Get toolchain ID for cache key
+      run: |
+        NDK_VER=$(grep -oP 'Pkg\.Revision = \K[\d.]+' "$ANDROID_NDK/source.properties" || echo unknown)
+        echo "VCPKG_TC=ndk-$NDK_VER" >> "$GITHUB_ENV"
+
+    - name: Restore vcpkg binary cache
+      uses: actions/cache@v6
+      with:
+        path: vcpkg-cache
+        key: vcpkg-android-${{ env.VCPKG_TC }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+        restore-keys: |
+          vcpkg-android-${{ env.VCPKG_TC }}-
+          vcpkg-android-
+
+    - name: Setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgJsonGlob: vcpkg.json
+
+    - name: Build SDL2 Shared Library
+      run: |
+        cmake -B build-sdl2 \
+          -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
+          -DANDROID_ABI=arm64-v8a \
+          -DANDROID_PLATFORM=android-$ANDROID_API \
+          -DSDL_SHARED=ON \
+          -DSDL_STATIC=OFF \
+          -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/sdl2-android \
+          -DCMAKE_BUILD_TYPE=Release \
+          sdl2-src
+        cmake --build build-sdl2 -j$(nproc)
+        cmake --install build-sdl2
+
+    - name: Build Native Library with CMake
+      run: |
+        ABI=arm64-v8a
+        BUILD_DIR=build-android-$ABI
+        SDL2_PREFIX=$GITHUB_WORKSPACE/sdl2-android
+
+        cmake -B $BUILD_DIR \
+          -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
+          -DVCPKG_TARGET_TRIPLET=arm64-android \
+          -DVCPKG_CMAKE_SYSTEM_VERSION=$ANDROID_API \
+          -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
+          -DANDROID_ABI=$ABI \
+          -DANDROID_PLATFORM=android-$ANDROID_API \
+          -DSDL2_DIR=$SDL2_PREFIX/lib/cmake/SDL2 \
+          -DCMAKE_BUILD_TYPE=Release
+
+        cmake --build $BUILD_DIR -j$(nproc)
+
+        JNILIBS=android/app/src/main/jniLibs/$ABI
+        mkdir -p $JNILIBS
+        cp -L $BUILD_DIR/libmain.so $JNILIBS/
+        cp -L $SDL2_PREFIX/lib/libSDL2*.so $JNILIBS/
+
+        VCPKG_LIB=$BUILD_DIR/vcpkg_installed/arm64-android/lib
+        for so in "$VCPKG_LIB"/*.so; do
+          [ -f "$so" ] && cp -L "$so" $JNILIBS/
+        done
+
+        STRIP=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip
+        for so in "$JNILIBS"/*.so; do
+          "$STRIP" --strip-unneeded "$so"
+        done
+
+        echo "Collected .so files:"
+        ls -lh $JNILIBS/
+
+    - name: Decode release keystore
+      env:
+        PVZP_KEYSTORE_BASE64: ${{ secrets.PVZP_KEYSTORE_BASE64 }}
+        PVZP_KEYSTORE_PASSWORD: ${{ secrets.PVZP_KEYSTORE_PASSWORD }}
+        PVZP_KEY_ALIAS: ${{ secrets.PVZP_KEY_ALIAS }}
+        PVZP_KEY_PASSWORD: ${{ secrets.PVZP_KEY_PASSWORD }}
+      run: |
+        if [ -n "$PVZP_KEYSTORE_BASE64" ] && [ -n "$PVZP_KEYSTORE_PASSWORD" ] && [ -n "$PVZP_KEY_ALIAS" ] && [ -n "$PVZP_KEY_PASSWORD" ]; then
+          echo "$PVZP_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/pvzp-release.keystore"
+          echo "PVZP_KEYSTORE_FILE=$RUNNER_TEMP/pvzp-release.keystore" >> "$GITHUB_ENV"
+        fi
+
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v6
+      with:
+        validate-wrappers: false
+
+    - name: Build APK with Gradle
+      env:
+        PVZP_KEYSTORE_PASSWORD: ${{ secrets.PVZP_KEYSTORE_PASSWORD }}
+        PVZP_KEY_ALIAS: ${{ secrets.PVZP_KEY_ALIAS }}
+        PVZP_KEY_PASSWORD: ${{ secrets.PVZP_KEY_PASSWORD }}
+      run: |
+        cd android
+        echo "sdk.dir=$ANDROID_HOME" > local.properties
+        gradle wrapper
+        ./gradlew assembleRelease -PusePrebuiltLibs=true --no-daemon
+
+    - name: Copy APK
+      run: |
+        mkdir -p dist
+        find android -name "*.apk" -path "*/release/*" -exec cp {} dist/pvz-portable-android-arm64-v8a.apk \;
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: pvz-portable-android
+        path: dist/
+
+  build-android-32:
+    name: Build for Android (armeabi-v7a)
+    runs-on: ubuntu-latest
+    env:
+      ANDROID_API: "24"
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        repository: ${{ env.SOURCE_REPO }}
+        token: ${{ secrets.PRIVATE_SOURCE_TOKEN }}
+        ref: ${{ inputs.source-ref || github.ref_name }}
+        fetch-depth: 0
+
+    - name: Set up JDK
+      uses: actions/setup-java@v5
+      with:
+        java-version: '21'
+        distribution: 'temurin'
+
+    - name: Set up Android SDK
+      uses: android-actions/setup-android@v4
+
+    - name: Install Android NDK
+      run: |
+        if [ -n "$ANDROID_NDK_LATEST_HOME" ] && [ -d "$ANDROID_NDK_LATEST_HOME" ]; then
+          echo "ANDROID_NDK=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=$ANDROID_NDK_LATEST_HOME" >> "$GITHUB_ENV"
+          echo "Using pre-installed NDK: $ANDROID_NDK_LATEST_HOME"
+        else
+          yes | sdkmanager --install "ndk;$(sdkmanager --list 2>/dev/null | grep -oP 'ndk;\K[\d.]+' | sort -V | tail -1)" || true
+          NDK_DIR=$(ls -d "$ANDROID_HOME"/ndk/*/ 2>/dev/null | sort -V | tail -1)
+          echo "ANDROID_NDK=${NDK_DIR%/}" >> "$GITHUB_ENV"
+          echo "ANDROID_NDK_HOME=${NDK_DIR%/}" >> "$GITHUB_ENV"
+        fi
+
+    - name: Download SDL2 Source
+      run: |
+        SDL2_TAG=$(git ls-remote --tags https://github.com/libsdl-org/SDL.git 'refs/tags/release-2.*' \
+          | sed 's|.*refs/tags/release-||' | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+        if [ -z "$SDL2_TAG" ]; then
+          SDL2_TAG="2.32.10"
+        fi
+        echo "Using SDL2 version: $SDL2_TAG"
+        wget -q "https://github.com/libsdl-org/SDL/releases/download/release-${SDL2_TAG}/SDL2-${SDL2_TAG}.tar.gz"
+        tar xf "SDL2-${SDL2_TAG}.tar.gz"
+        mv "SDL2-${SDL2_TAG}" sdl2-src
+
+    - name: Get toolchain ID for cache key
+      run: |
+        NDK_VER=$(grep -oP 'Pkg\.Revision = \K[\d.]+' "$ANDROID_NDK/source.properties" || echo unknown)
+        echo "VCPKG_TC=ndk-$NDK_VER" >> "$GITHUB_ENV"
+
+    - name: Restore vcpkg binary cache
+      uses: actions/cache@v6
+      with:
+        path: vcpkg-cache
+        key: vcpkg-android-armeabi-v7a-${{ env.VCPKG_TC }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json') }}
+        restore-keys: |
+          vcpkg-android-armeabi-v7a-${{ env.VCPKG_TC }}-
+          vcpkg-android-armeabi-v7a-
+
+    - name: Setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgJsonGlob: vcpkg.json
+
+    - name: Build SDL2 Shared Library
+      run: |
+        cmake -B build-sdl2 \
+          -DCMAKE_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
+          -DANDROID_ABI=armeabi-v7a \
+          -DANDROID_PLATFORM=android-$ANDROID_API \
+          -DSDL_SHARED=ON \
+          -DSDL_STATIC=OFF \
+          -DCMAKE_INSTALL_PREFIX=$GITHUB_WORKSPACE/sdl2-android \
+          -DCMAKE_BUILD_TYPE=Release \
+          sdl2-src
+        cmake --build build-sdl2 -j$(nproc)
+        cmake --install build-sdl2
+
+    - name: Build Native Library with CMake
+      run: |
+        ABI=armeabi-v7a
+        BUILD_DIR=build-android-$ABI
+        SDL2_PREFIX=$GITHUB_WORKSPACE/sdl2-android
+
+        cmake -B $BUILD_DIR \
+          -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
+          -DVCPKG_TARGET_TRIPLET=arm-neon-android \
+          -DVCPKG_CMAKE_SYSTEM_VERSION=$ANDROID_API \
+          -DVCPKG_CHAINLOAD_TOOLCHAIN_FILE=$ANDROID_NDK/build/cmake/android.toolchain.cmake \
+          -DANDROID_ABI=$ABI \
+          -DANDROID_PLATFORM=android-$ANDROID_API \
+          -DSDL2_DIR=$SDL2_PREFIX/lib/cmake/SDL2 \
+          -DLOW_MEMORY=ON \
+          -DCMAKE_BUILD_TYPE=Release
+
+        cmake --build $BUILD_DIR -j$(nproc)
+
+        JNILIBS=android/app/src/main/jniLibs/$ABI
+        mkdir -p $JNILIBS
+        cp -L $BUILD_DIR/libmain.so $JNILIBS/
+        cp -L $SDL2_PREFIX/lib/libSDL2*.so $JNILIBS/
+
+        VCPKG_LIB=$BUILD_DIR/vcpkg_installed/arm-neon-android/lib
+        for so in "$VCPKG_LIB"/*.so; do
+          [ -f "$so" ] && cp -L "$so" $JNILIBS/
+        done
+
+        STRIP=$ANDROID_NDK/toolchains/llvm/prebuilt/linux-x86_64/bin/llvm-strip
+        for so in "$JNILIBS"/*.so; do
+          "$STRIP" --strip-unneeded "$so"
+        done
+
+        echo "Collected .so files:"
+        ls -lh $JNILIBS/
+
+    - name: Decode release keystore
+      env:
+        PVZP_KEYSTORE_BASE64: ${{ secrets.PVZP_KEYSTORE_BASE64 }}
+        PVZP_KEYSTORE_PASSWORD: ${{ secrets.PVZP_KEYSTORE_PASSWORD }}
+        PVZP_KEY_ALIAS: ${{ secrets.PVZP_KEY_ALIAS }}
+        PVZP_KEY_PASSWORD: ${{ secrets.PVZP_KEY_PASSWORD }}
+      run: |
+        if [ -n "$PVZP_KEYSTORE_BASE64" ] && [ -n "$PVZP_KEYSTORE_PASSWORD" ] && [ -n "$PVZP_KEY_ALIAS" ] && [ -n "$PVZP_KEY_PASSWORD" ]; then
+          echo "$PVZP_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/pvzp-release.keystore"
+          echo "PVZP_KEYSTORE_FILE=$RUNNER_TEMP/pvzp-release.keystore" >> "$GITHUB_ENV"
+        fi
+
+    - name: Setup Gradle
+      uses: gradle/actions/setup-gradle@v6
+      with:
+        validate-wrappers: false
+
+    - name: Build APK with Gradle
+      env:
+        PVZP_KEYSTORE_PASSWORD: ${{ secrets.PVZP_KEYSTORE_PASSWORD }}
+        PVZP_KEY_ALIAS: ${{ secrets.PVZP_KEY_ALIAS }}
+        PVZP_KEY_PASSWORD: ${{ secrets.PVZP_KEY_PASSWORD }}
+      run: |
+        cd android
+        echo "sdk.dir=$ANDROID_HOME" > local.properties
+        gradle wrapper
+        ./gradlew assembleRelease -PusePrebuiltLibs=true -PabiFilter=armeabi-v7a --no-daemon
+
+    - name: Copy APK
+      run: |
+        mkdir -p dist
+        find android -name "*.apk" -path "*/release/*" -exec cp {} dist/pvz-portable-android-armeabi-v7a.apk \;
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: pvz-portable-android-32
+        path: dist/
+
+  build-ios:
+    name: Build for iOS (arm64)
+    runs-on: macos-latest
+    env:
+      IOS_DEPLOY_TARGET: "16.4"
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        repository: ${{ env.SOURCE_REPO }}
+        token: ${{ secrets.PRIVATE_SOURCE_TOKEN }}
+        ref: ${{ inputs.source-ref || github.ref_name }}
+        fetch-depth: 0
+
+    - name: Get toolchain ID for cache key
+      run: |
+        CLANG_VER=$(clang --version | head -1 | sed -nE 's/.*version ([0-9.]+).*/\1/p')
+        echo "VCPKG_TC=clang-${CLANG_VER:-unknown}" >> "$GITHUB_ENV"
+
+    - name: Restore vcpkg binary cache
+      uses: actions/cache@v6
+      with:
+        path: vcpkg-cache
+        key: vcpkg-ios-${{ env.VCPKG_TC }}-${{ hashFiles('vcpkg.json', 'vcpkg-configuration.json', 'CMake/triplets/arm64-ios.cmake') }}
+        restore-keys: |
+          vcpkg-ios-${{ env.VCPKG_TC }}-
+          vcpkg-ios-
+
+    - name: Setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgJsonGlob: vcpkg.json
+
+    - name: Build PvZ-Portable for iOS
+      run: |
+        BUILD_DIR=build-ios
+
+        cmake -B $BUILD_DIR \
+          -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
+          -DVCPKG_OVERLAY_TRIPLETS=$GITHUB_WORKSPACE/CMake/triplets \
+          -DVCPKG_TARGET_TRIPLET=arm64-ios \
+          -DCMAKE_SYSTEM_NAME=iOS \
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=$IOS_DEPLOY_TARGET \
+          -DCMAKE_OSX_ARCHITECTURES=arm64 \
+          -DCMAKE_BUILD_TYPE=Release \
+          -G Xcode
+
+        cmake --build $BUILD_DIR --config Release -- \
+          -sdk iphoneos \
+          CODE_SIGN_IDENTITY="-" \
+          CODE_SIGNING_ALLOWED=NO
+
+    - name: Create unsigned IPA
+      run: |
+        APP_PATH=$(find build-ios -name "pvz-portable.app" -path "*Release*" | head -1)
+        if [ -f "build-ios/Info.plist" ]; then
+          cp build-ios/Info.plist "$APP_PATH/Info.plist"
+        fi
+        sed -i '' 's/\$(PRODUCT_BUNDLE_IDENTIFIER)/io.github.wszqkzqk.pvz-portable/g' "$APP_PATH/Info.plist" || true
+        sed -i '' 's/\$(EXECUTABLE_NAME)/pvz-portable/g' "$APP_PATH/Info.plist" || true
+        sed -i '' 's/\$(PRODUCT_NAME)/PvZ Portable/g' "$APP_PATH/Info.plist" || true
+
+        codesign --force --deep --sign - "$APP_PATH" || true
+
+        mkdir -p dist/Payload
+        cp -R "$APP_PATH" dist/Payload/
+        cd dist
+        zip -r -y pvz-portable-ios-arm64.ipa Payload/
+        rm -rf Payload
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: pvz-portable-ios
+        path: dist/
+
+  build-ios-ipad-mini-1:
+    name: Build for iOS armv7 (iPad mini 1 / A5 chip)
+    runs-on: macos-14
+    env:
+      IOS10_SDK_TAG: iPhoneOS10.3.sdk
+      IOS10_SDK_REPO: theos/sdks
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        repository: ${{ env.SOURCE_REPO }}
+        token: ${{ secrets.PRIVATE_SOURCE_TOKEN }}
+        ref: ${{ inputs.source-ref || github.ref_name }}
+        fetch-depth: 0
+
+    - name: Setup ccache
+      uses: hendrikmuhs/ccache-action@v1.2.14
+      with:
+        key: ${{ runner.os }}-ios-ipadmini1
+
+    - name: Select Xcode 15
+      run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
+
+    - name: Inject iOS 10.3 SDK into Xcode
+      run: |
+        SDKS_DIR="$(xcode-select -p)/Platforms/iPhoneOS.platform/Developer/SDKs"
+        echo "Xcode SDKs dir: $SDKS_DIR"
+        echo "Available SDKs before injection:"
+        ls "$SDKS_DIR"
+
+        IOS10_SYSROOT="$SDKS_DIR/${{ env.IOS10_SDK_TAG }}"
+        echo "IOS10_SYSROOT=$IOS10_SYSROOT" >> $GITHUB_ENV
+
+        if [ ! -d "$IOS10_SYSROOT" ]; then
+          echo "Cloning ${{ env.IOS10_SDK_TAG }} from ${{ env.IOS10_SDK_REPO }} via sparse checkout..."
+          git clone --depth 1 --filter=blob:none --sparse https://github.com/${{ env.IOS10_SDK_REPO }} ios-sdks-repo
+          cd ios-sdks-repo
+          git sparse-checkout set ${{ env.IOS10_SDK_TAG }}
+          cd ..
+          sudo mv ios-sdks-repo/${{ env.IOS10_SDK_TAG }} "$SDKS_DIR/"
+
+          sudo cp -R "$SDKS_DIR/iPhoneOS.sdk/usr/include/c++/" "$SDKS_DIR/${{ env.IOS10_SDK_TAG }}/usr/include/c++/"
+        fi
+
+        echo "Available SDKs after injection:"
+        ls "$SDKS_DIR"
+
+        if [ ! -d "$SDKS_DIR/${{ env.IOS10_SDK_TAG }}" ]; then
+          echo "ERROR: SDK injection failed!"
+          exit 1
+        fi
+        echo "iOS 10.3 SDK successfully injected."
+
+    - name: Setup vcpkg
+      uses: lukka/run-vcpkg@v11
+      with:
+        vcpkgJsonGlob: vcpkg.json
+
+    - name: Build PvZ-Portable for iPad mini 1 (armv7, iOS 9.0)
+      run: |
+        BUILD_DIR=build-ios-ipadmini1
+
+        cmake -B $BUILD_DIR \
+          -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
+          -DVCPKG_TARGET_TRIPLET=armv7-ios \
+          -DVCPKG_OVERLAY_TRIPLETS="$GITHUB_WORKSPACE/ios/triplets" \
+          -DCMAKE_SYSTEM_NAME=iOS \
+          -DCMAKE_OSX_DEPLOYMENT_TARGET=9.0 \
+          -DCMAKE_OSX_ARCHITECTURES=armv7 \
+          -DCMAKE_OSX_SYSROOT="$IOS10_SYSROOT" \
+          -DIOS_DEPLOYMENT_TARGET=9.0 \
+          -DIOS_IPADMINI1=ON \
+          -DCMAKE_CXX_FLAGS="-D_LIBCPP_DISABLE_AVAILABILITY" \
+          -DCMAKE_C_FLAGS="-D_LIBCPP_DISABLE_AVAILABILITY" \
+          -DCMAKE_EXE_LINKER_FLAGS="-F$GITHUB_WORKSPACE/dummy_frameworks -lobjc -Wl,-undefined,dynamic_lookup" \
+          -DLOW_MEMORY=ON \
+          -DPVZ_DEBUG=ON \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DCMAKE_C_COMPILER_LAUNCHER=ccache \
+          -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+          -G Ninja
+
+        cmake --build $BUILD_DIR --config Release > build_log.txt 2>&1 || (tail -n 100 build_log.txt && exit 1)
+
+    - name: Create unsigned IPA for iPad mini 1
+      run: |
+        APP_PATH=$(find build-ios-ipadmini1 -name "pvz-portable.app" | head -1)
+        if [ -z "$APP_PATH" ]; then
+          echo "ERROR: .app bundle not found!"
+          exit 1
+        fi
+        echo "Found app at: $APP_PATH"
+
+        echo "Binary architectures:"
+        lipo -info "$APP_PATH/pvz-portable" || true
+
+        echo "Compiling asset catalog..."
+        rm -rf "$APP_PATH/Assets.xcassets"
+        xcrun actool \
+          --compile "$APP_PATH" \
+          --platform iphoneos \
+          --minimum-deployment-target 9.0 \
+          --target-device ipad \
+          --app-icon AppIcon \
+          --output-format human-readable-text \
+          --output-partial-info-plist /tmp/actool-partial.plist \
+          ios/Assets.xcassets || echo "actool warning (non-fatal)"
+
+        cp ios/Assets.xcassets/AppIcon.appiconset/AppIcon.png "$APP_PATH/Icon.png" || true
+
+        echo "Compiling launch screen storyboard..."
+        rm -f "$APP_PATH/LaunchScreen.storyboard"
+        xcrun ibtool \
+          --compile "$APP_PATH/LaunchScreen.storyboardc" \
+          --sdk "$IOS10_SYSROOT" \
+          ios/LaunchScreen.storyboard || echo "ibtool warning (non-fatal)"
+
+        if [ -f "build-ios-ipadmini1/Info.plist" ]; then
+          cp build-ios-ipadmini1/Info.plist "$APP_PATH/Info.plist"
+        fi
+        sed -i '' 's/\$(PRODUCT_BUNDLE_IDENTIFIER)/io.github.wszqkzqk.pvz-portable/g' "$APP_PATH/Info.plist" || true
+        sed -i '' 's/\$(EXECUTABLE_NAME)/pvz-portable/g' "$APP_PATH/Info.plist" || true
+        sed -i '' 's/\$(PRODUCT_NAME)/PvZ Portable/g' "$APP_PATH/Info.plist" || true
+
+        echo "Ad-hoc signing app bundle..."
+        codesign --force --deep --sign - "$APP_PATH" || true
+
+        mkdir -p dist/Payload
+        cp -R "$APP_PATH" dist/Payload/
+        cd dist
+        zip -r -y pvz-portable-ios-armv7-ipadmini1.ipa Payload/
+        rm -rf Payload
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: pvz-portable-ios-ipad-mini-1
+        path: dist/
+
+  build-wasm:
+    name: Build for WebAssembly (Emscripten)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        repository: ${{ env.SOURCE_REPO }}
+        token: ${{ secrets.PRIVATE_SOURCE_TOKEN }}
+        ref: ${{ inputs.source-ref || github.ref_name }}
+        fetch-depth: 0
+
+    - name: Setup Emscripten
+      uses: emscripten-core/setup-emsdk@v16
+
+    - name: Install Build Tools
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y ninja-build
+
+    - name: Build libopenmpt for Emscripten
+      run: |
+        SYSROOT="$(em-config EMSCRIPTEN_ROOT)/cache/sysroot"
+        OPENMPT_TAG=$(git ls-remote --tags https://github.com/OpenMPT/openmpt.git 'refs/tags/libopenmpt-*' \
+          | sed 's|.*refs/tags/libopenmpt-||' \
+          | grep -E '^[0-9]+\.[0-9]+\.[0-9]+$' | sort -V | tail -1 || true)
+        if [ -z "$OPENMPT_TAG" ]; then
+          OPENMPT_TAG="0.8.4"
+        fi
+        echo "Using libopenmpt version: $OPENMPT_TAG"
+        git clone --depth=1 --branch "libopenmpt-${OPENMPT_TAG}" https://github.com/OpenMPT/openmpt.git /tmp/libopenmpt-src
+        cd /tmp/libopenmpt-src
+        emmake make CONFIG=emscripten \
+          STATIC_LIB=1 SHARED_LIB=0 \
+          EXAMPLES=0 OPENMPT123=0 TEST=0 \
+          NO_ZLIB=1 NO_MPG123=1 NO_OGG=1 NO_VORBIS=1 NO_VORBISFILE=1 \
+          NO_PORTAUDIO=1 NO_PORTAUDIOCPP=1 NO_PULSEAUDIO=1 \
+          NO_SDL2=1 NO_FLAC=1 NO_SNDFILE=1 \
+          -j$(nproc)
+        emmake make CONFIG=emscripten \
+          STATIC_LIB=1 SHARED_LIB=0 \
+          EXAMPLES=0 OPENMPT123=0 TEST=0 \
+          PREFIX="${SYSROOT}" install
+
+    - name: Build PvZ-Portable for WebAssembly
+      run: |
+        mkdir build-wasm
+        emcmake cmake -G Ninja -B build-wasm -DCMAKE_BUILD_TYPE=Release
+        cmake --build build-wasm -j$(nproc)
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: pvz-portable-wasm
+        path: |
+          build-wasm/pvz-portable.html
+          build-wasm/pvz-portable.js
+          build-wasm/pvz-portable.wasm
+
+  build-nintendo-switch:
+    name: Build for Nintendo Switch
+    runs-on: ubuntu-latest
+    container: devkitpro/devkita64:latest
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        repository: ${{ env.SOURCE_REPO }}
+        token: ${{ secrets.PRIVATE_SOURCE_TOKEN }}
+        ref: ${{ inputs.source-ref || github.ref_name }}
+        fetch-depth: 0
+
+    - name: Cache libopenmpt (Switch)
+      id: cache-switch-libopenmpt
+      uses: actions/cache@v4
+      with:
+        path: |
+          /opt/devkitpro/portlibs/switch/include/libopenmpt
+          /opt/devkitpro/portlibs/switch/lib/libopenmpt.a
+        key: ${{ runner.os }}-switch-libopenmpt-v1
+        restore-keys: |
+          ${{ runner.os }}-switch-libopenmpt-
+
+    - name: Install Switch dependencies
+      run: |
+        dkp-pacman -S --needed --noconfirm \
+          switch-sdl2 \
+          switch-libogg \
+          switch-libvorbis \
+          switch-mpg123 \
+          switch-libpng \
+          switch-libjpeg-turbo \
+          switch-zlib \
+          switch-cmake
+
+    - name: Compile libopenmpt for Switch
+      if: steps.cache-switch-libopenmpt.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        if [ -f "/opt/devkitpro/portlibs/switch/lib/libopenmpt.a" ]; then
+          echo "libopenmpt is already cached, skipping."
+        else
+          source $DEVKITPRO/switchvars.sh
+          git clone --depth 1 https://github.com/OpenMPT/openmpt
+          cd openmpt
+          make CONFIG=gcc SHARED_LIB=0 DYNLINK=0 EXAMPLES=0 OPENMPT123=0 TEST=0 PREFIX=$PORTLIBS_PREFIX CC="aarch64-none-elf-gcc" CXX="aarch64-none-elf-g++" install
+        fi
+
+    - name: Build PvZ-Portable for Nintendo Switch
+      shell: bash
+      run: |
+        source $DEVKITPRO/switchvars.sh
+        mkdir -p build-switch
+        cmake -B build-switch \
+          -DCMAKE_TOOLCHAIN_FILE=$DEVKITPRO/cmake/Switch.cmake \
+          -DNINTENDO_SWITCH=ON \
+          -DCMAKE_BUILD_TYPE=Release
+        cmake --build build-switch
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: pvz-portable-nintendo-switch
+        path: |
+          build-switch/pvz-portable.nro
+          build-switch/pvz-portable.elf
+
+  release:
+    name: Release
+    needs: ['build-archlinux', 'build-linux-static', 'build-windows-msys2-ucrt64', 'build-windows-msvc-x64', 'build-windows-msvc-x86', 'build-windows-uwp', 'build-macos', 'build-android', 'build-android-32', 'build-ios', 'build-ios-ipad-mini-1', 'build-wasm', 'build-nintendo-switch']
+    if: github.ref_type == 'tag' || github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+    - name: Download All Artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+
+    - name: Prepare Release Files
+      run: |
+        mkdir release_files
+
+        echo "Preparing Arch Linux file..."
+        chmod +x artifacts/pvz-portable-archlinux/pvz-portable
+        mv artifacts/pvz-portable-archlinux/pvz-portable release_files/pvz-portable-archlinux-x86_64
+
+        echo "Preparing Linux static file..."
+        chmod +x artifacts/pvz-portable-linux-static/pvz-portable
+        mv artifacts/pvz-portable-linux-static/pvz-portable release_files/pvz-portable-linux-static-x86_64
+
+        echo "Preparing Windows MSVC x64 file..."
+        mv artifacts/pvz-portable-windows-msvc-x64/pvz-portable.exe release_files/pvz-portable-windows-msvc-x64-static.exe
+
+        echo "Preparing Windows MSVC x86 file..."
+        mv artifacts/pvz-portable-windows-msvc-x86/pvz-portable.exe release_files/pvz-portable-windows-msvc-x86-static.exe
+
+        echo "Preparing Windows MSYS2 file..."
+        mv artifacts/pvz-portable-windows-msys2-ucrt64/pvz-portable.exe release_files/pvz-portable-windows-ucrt64-static.exe
+
+        echo "Preparing UWP file..."
+        mv artifacts/pvz-portable-uwp-appx/*.appx release_files/ 2>/dev/null || true
+
+        echo "Preparing macOS file..."
+        cd artifacts/pvz-portable-macos
+        chmod +x pvz-portable
+        zip -r -y ../../release_files/pvz-portable-macos-aarch64.zip .
+        cd ../..
+
+        echo "Preparing Android file..."
+        mv artifacts/pvz-portable-android/pvz-portable-android-arm64-v8a.apk release_files/pvz-portable-android-arm64-v8a.apk
+
+        echo "Preparing Android 32-bit file..."
+        mv artifacts/pvz-portable-android-32/pvz-portable-android-armeabi-v7a.apk release_files/pvz-portable-android-armeabi-v7a.apk
+
+        echo "Preparing iOS 15 file..."
+        mv artifacts/pvz-portable-ios/pvz-portable-ios-arm64.ipa release_files/pvz-portable-ios-arm64.ipa
+
+        echo "Preparing iOS 9 (iPad Mini 1 32-bit) file..."
+        if [ -f artifacts/pvz-portable-ios-ipad-mini-1/pvz-portable-ios-armv7-ipadmini1.ipa ]; then
+          mv artifacts/pvz-portable-ios-ipad-mini-1/pvz-portable-ios-armv7-ipadmini1.ipa release_files/pvz-portable-ios-armv7-ipadmini1.ipa
+        fi
+
+        echo "Preparing WebAssembly file..."
+        cd artifacts/pvz-portable-wasm
+        zip -r ../../release_files/pvz-portable-wasm.zip .
+        cd ../..
+
+        echo "Preparing Nintendo Switch files..."
+        if [ -f artifacts/pvz-portable-nintendo-switch/pvz-portable.nro ]; then
+          mv artifacts/pvz-portable-nintendo-switch/pvz-portable.nro release_files/pvz-portable-nintendo-switch.nro
+        fi
+        if [ -f artifacts/pvz-portable-nintendo-switch/pvz-portable.elf ]; then
+          mv artifacts/pvz-portable-nintendo-switch/pvz-portable.elf release_files/pvz-portable-nintendo-switch.elf
+        fi
+
+        echo "Final files:"
+        ls -lh release_files/
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: release_files/*
+        tag_name: ${{ github.ref_type == 'tag' && github.ref_name || 'latest' }}
+        name: ${{ github.ref_type == 'tag' && github.ref_name || 'Latest Release' }}
+        generate_release_notes: true
+        draft: false
+        prerelease: ${{ github.ref_type != 'tag' }}
