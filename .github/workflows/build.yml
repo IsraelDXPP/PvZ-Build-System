@@ -1341,6 +1341,66 @@ jobs:
           build-switch/pvz-portable.nro
           build-switch/pvz-portable.elf
 
+  build-ps4:
+    name: Build for PS4 (homebrew, OpenOrbis)
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+      with:
+        repository: ${{ env.SOURCE_REPO }}
+        token: ${{ secrets.PRIVATE_SOURCE_TOKEN }}
+        ref: ${{ inputs.source-ref || github.ref_name }}
+        fetch-depth: 0
+
+    - name: Install toolchain prerequisites
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends \
+          clang lld llvm cmake ninja-build curl tar bzip2 autoconf automake libtool pkg-config
+        # PkgTool.Core is a .NET binary that needs libssl1.1, which Ubuntu 24.04
+        # no longer ships. This is the version the OpenOrbis Dockerfile installs.
+        curl -fsSLO http://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2_amd64.deb
+        sudo dpkg -i libssl1.1_1.1.1f-1ubuntu2_amd64.deb
+
+    - name: Fetch the OpenOrbis toolchain
+      run: |
+        OO_VERSION=v0.5.2
+        mkdir -p "$HOME/OpenOrbis"
+        curl -fsSL "https://github.com/OpenOrbis/OpenOrbis-PS4-Toolchain/releases/download/$OO_VERSION/$OO_VERSION.tar.gz" \
+          | tar -xz -C "$HOME/OpenOrbis"
+        echo "OO_PS4_TOOLCHAIN=$HOME/OpenOrbis/OpenOrbis/PS4Toolchain" >> "$GITHUB_ENV"
+
+    # Cross-building the dependency stack takes a while, mostly libopenmpt.
+    - name: Cache PS4 dependencies
+      id: cache-ps4-deps
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/OpenOrbis/OpenOrbis/PS4Toolchain/lib
+          ~/OpenOrbis/OpenOrbis/PS4Toolchain/include
+        key: ps4-deps-v1-${{ hashFiles('CMake/ps4-build-deps.sh') }}
+
+    - name: Cross-compile dependencies
+      if: steps.cache-ps4-deps.outputs.cache-hit != 'true'
+      run: bash CMake/ps4-build-deps.sh "$RUNNER_TEMP/ps4-deps"
+
+    - name: Build PvZ-Portable for PS4
+      run: |
+        cmake -B build-ps4 -G Ninja \
+          -DCMAKE_TOOLCHAIN_FILE=CMake/PS4Toolchain.cmake \
+          -DCMAKE_BUILD_TYPE=Release
+        cmake --build build-ps4
+        cmake --build build-ps4 --target ps4-pkg
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v7
+      with:
+        name: pvz-portable-ps4
+        path: |
+          build-ps4/pvz-portable.elf
+          build-ps4/pkg/eboot.bin
+          build-ps4/pkg/*.pkg
+
   release:
     name: Release
     needs: ['build-archlinux', 'build-linux-static', 'build-windows-msys2-ucrt64', 'build-windows-msvc-x64', 'build-windows-msvc-x86', 'build-windows-uwp', 'build-macos', 'build-android', 'build-android-32', 'build-ios', 'build-ios-ipad-mini-1', 'build-wasm', 'build-nintendo-switch']
