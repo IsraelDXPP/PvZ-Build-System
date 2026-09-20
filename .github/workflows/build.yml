@@ -1357,6 +1357,10 @@ jobs:
         sudo apt-get update
         sudo apt-get install -y --no-install-recommends \
           clang lld llvm cmake ninja-build curl tar bzip2 autoconf automake libtool pkg-config
+        # PkgTool.Core is a .NET binary that needs libssl1.1, which Ubuntu 24.04
+        # no longer ships. This is the version the OpenOrbis Dockerfile installs.
+        curl -fsSLO http://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl1.1_1.1.1f-1ubuntu2_amd64.deb
+        sudo dpkg -i libssl1.1_1.1.1f-1ubuntu2_amd64.deb
 
     - name: Fetch the OpenOrbis toolchain
       run: |
@@ -1386,6 +1390,7 @@ jobs:
           -DCMAKE_TOOLCHAIN_FILE=CMake/PS4Toolchain.cmake \
           -DCMAKE_BUILD_TYPE=Release
         cmake --build build-ps4
+        cmake --build build-ps4 --target ps4-pkg
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v7
@@ -1394,6 +1399,7 @@ jobs:
         path: |
           build-ps4/pvz-portable.elf
           build-ps4/pkg/eboot.bin
+          build-ps4/pkg/*.pkg
 
   release:
     name: Release
