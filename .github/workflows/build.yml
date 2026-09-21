@@ -20,6 +20,15 @@ on:
         description: 'Branch or tag of the source repo to build'
         required: true
         default: 'widescreen-mp'
+      build-type:
+        description: 'MSVC (cl) build type'
+        required: false
+        default: 'Release'
+        type: choice
+        options:
+          - Release
+          - RelWithDebInfo
+          - Debug
   push:
     branches: [ "main" ]
     tags: [ "*" ]
@@ -394,11 +403,14 @@ jobs:
     - name: Compile PvZ-Portable for Windows (MSVC)
       shell: pwsh
       run: |
-        cmake -G "Ninja" -B build -DCMAKE_BUILD_TYPE=Release -DCONSOLE=OFF -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static
+        $bt = "${{ inputs.build-type || 'Release' }}"
+        cmake -G "Ninja" -B build -DCMAKE_BUILD_TYPE=$bt -DCONSOLE=OFF -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x64-windows-static
         cmake --build build
 
         New-Item -ItemType Directory -Force -Path dist | Out-Null
         Copy-Item build/pvz-portable.exe dist/
+        # Stage PDB symbols when produced (RelWithDebInfo/Debug) for crash-dump analysis
+        Copy-Item build/*.pdb dist/ -ErrorAction SilentlyContinue
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v7
@@ -448,11 +460,14 @@ jobs:
     - name: Compile PvZ-Portable for Windows (MSVC)
       shell: pwsh
       run: |
-        cmake -G "Ninja" -B build -DCMAKE_BUILD_TYPE=Release -DCONSOLE=OFF -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x86-windows-static
+        $bt = "${{ inputs.build-type || 'Release' }}"
+        cmake -G "Ninja" -B build -DCMAKE_BUILD_TYPE=$bt -DCONSOLE=OFF -DCMAKE_TOOLCHAIN_FILE="$env:VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake" -DVCPKG_TARGET_TRIPLET=x86-windows-static
         cmake --build build
 
         New-Item -ItemType Directory -Force -Path dist | Out-Null
         Copy-Item build/pvz-portable.exe dist/
+        # Stage PDB symbols when produced (RelWithDebInfo/Debug) for crash-dump analysis
+        Copy-Item build/*.pdb dist/ -ErrorAction SilentlyContinue
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v7
