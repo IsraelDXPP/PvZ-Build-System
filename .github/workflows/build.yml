@@ -21,7 +21,7 @@ on:
         required: true
         default: 'widescreen-mp'
       build-type:
-        description: 'MSVC (cl) build type'
+        description: 'Build type for MSVC (cl) and PS4 (symbols for crash analysis)'
         required: false
         default: 'Release'
         type: choice
@@ -1430,9 +1430,10 @@ jobs:
 
     - name: Build PvZ-Portable for PS4
       run: |
+        BT="${{ inputs.build-type || 'Release' }}"
         cmake -B build-ps4 -G Ninja \
           -DCMAKE_TOOLCHAIN_FILE=CMake/PS4Toolchain.cmake \
-          -DCMAKE_BUILD_TYPE=Release
+          -DCMAKE_BUILD_TYPE=$BT
         cmake --build build-ps4 --target ps4-pkg
 
     - name: Upload Artifact
