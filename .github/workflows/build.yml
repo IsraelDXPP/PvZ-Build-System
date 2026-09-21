@@ -742,6 +742,23 @@ jobs:
           echo "ANDROID_NDK_HOME=${NDK_DIR%/}" >> "$GITHUB_ENV"
         fi
 
+    - name: Install CMake 4.x from Kitware apt (vcpkg requires it)
+      run: |
+        # The vcpkg baseline requires CMake >= 4.3 but the runner image ships
+        # 3.x, and vcpkg's own download of 4.3.2 keeps failing (Kitware 504s),
+        # so provide a new enough CMake up front and skip that download.
+        . /etc/os-release
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends ca-certificates gpg wget
+        test -f /usr/share/doc/kitware-archive-keyring/copyright || \
+          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | \
+          gpg --dearmor - | sudo tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
+        echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ $VERSION_CODENAME main" | \
+          sudo tee /etc/apt/sources.list.d/kitware.list >/dev/null
+        sudo apt-get update
+        sudo apt-get install -y cmake
+        cmake --version
+
     - name: Download SDL2 Source
       run: |
         SDL2_TAG=$(git ls-remote --tags https://github.com/libsdl-org/SDL.git 'refs/tags/release-2.*' \
@@ -896,6 +913,23 @@ jobs:
           echo "ANDROID_NDK=${NDK_DIR%/}" >> "$GITHUB_ENV"
           echo "ANDROID_NDK_HOME=${NDK_DIR%/}" >> "$GITHUB_ENV"
         fi
+
+    - name: Install CMake 4.x from Kitware apt (vcpkg requires it)
+      run: |
+        # The vcpkg baseline requires CMake >= 4.3 but the runner image ships
+        # 3.x, and vcpkg's own download of 4.3.2 keeps failing (Kitware 504s),
+        # so provide a new enough CMake up front and skip that download.
+        . /etc/os-release
+        sudo apt-get update
+        sudo apt-get install -y --no-install-recommends ca-certificates gpg wget
+        test -f /usr/share/doc/kitware-archive-keyring/copyright || \
+          wget -O - https://apt.kitware.com/keys/kitware-archive-latest.asc 2>/dev/null | \
+          gpg --dearmor - | sudo tee /usr/share/keyrings/kitware-archive-keyring.gpg >/dev/null
+        echo "deb [signed-by=/usr/share/keyrings/kitware-archive-keyring.gpg] https://apt.kitware.com/ubuntu/ $VERSION_CODENAME main" | \
+          sudo tee /etc/apt/sources.list.d/kitware.list >/dev/null
+        sudo apt-get update
+        sudo apt-get install -y cmake
+        cmake --version
 
     - name: Download SDL2 Source
       run: |
