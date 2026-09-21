@@ -1100,6 +1100,9 @@ jobs:
     - name: Select Xcode 15
       run: sudo xcode-select -s /Applications/Xcode_15.4.app/Contents/Developer
 
+    - name: Install Ninja
+      run: brew install ninja
+
     - name: Inject iOS 10.3 SDK into Xcode
       run: |
         SDKS_DIR="$(xcode-select -p)/Platforms/iPhoneOS.platform/Developer/SDKs"
