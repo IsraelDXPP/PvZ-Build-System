@@ -1138,6 +1138,29 @@ jobs:
       with:
         vcpkgJsonGlob: vcpkg.json
 
+    - name: Download FFmpeg source
+      run: |
+        git clone --depth 1 --branch n6.1.1 --single-branch https://github.com/FFmpeg/FFmpeg.git ffmpeg-src
+
+    - name: Build FFmpeg (armv7, iOS 9.0)
+      run: |
+        cd ffmpeg-src
+        CC="$(xcrun --sdk iphoneos --find clang)"
+        ./configure \
+          --prefix="$GITHUB_WORKSPACE/ffmpeg-ios" \
+          --enable-cross-compile \
+          --arch=arm --cpu=armv7 --target-os=darwin \
+          --cc="$CC" \
+          --sysroot="$IOS10_SYSROOT" \
+          --enable-static --disable-shared \
+          --disable-programs --disable-doc --disable-avdevice --disable-network \
+          --disable-encoders --disable-muxers --disable-filters \
+          --enable-swscale --enable-swresample --enable-videotoolbox \
+          --extra-cflags="-arch armv7 -isysroot $IOS10_SYSROOT -mios-version-min=9.0 -D_LIBCPP_DISABLE_AVAILABILITY" \
+          --extra-ldflags="-arch armv7 -isysroot $IOS10_SYSROOT -mios-version-min=9.0"
+        make -j4
+        make install
+
     - name: Build PvZ-Portable for iPad mini 1 (armv7, iOS 9.0)
       run: |
         BUILD_DIR=build-ios-ipadmini1
@@ -1146,6 +1169,7 @@ jobs:
           -DCMAKE_TOOLCHAIN_FILE=$VCPKG_ROOT/scripts/buildsystems/vcpkg.cmake \
           -DVCPKG_TARGET_TRIPLET=armv7-ios \
           -DVCPKG_OVERLAY_TRIPLETS="$GITHUB_WORKSPACE/ios/triplets" \
+          -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/ffmpeg-ios" \
           -DCMAKE_SYSTEM_NAME=iOS \
           -DCMAKE_OSX_DEPLOYMENT_TARGET=9.0 \
           -DCMAKE_OSX_ARCHITECTURES=armv7 \
