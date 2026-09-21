@@ -1385,7 +1385,7 @@ jobs:
         cmake -B build-ps4 -G Ninja \
           -DCMAKE_TOOLCHAIN_FILE=CMake/PS4Toolchain.cmake \
           -DCMAKE_BUILD_TYPE=Release
-        cmake --build build-ps4
+        cmake --build build-ps4 --target ps4-pkg
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v7
@@ -1394,6 +1394,7 @@ jobs:
         path: |
           build-ps4/pvz-portable.elf
           build-ps4/pkg/eboot.bin
+          build-ps4/pkg/*.pkg
           build-ps4/pkg/shaders/*.sb
 
   release:
