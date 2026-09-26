@@ -39,7 +39,7 @@ concurrency:
 
 env:
   # CHANGE THIS to your private source repo (owner/repo format)
-  SOURCE_REPO: IsraelDXPP/PvZ-PortableNT
+  SOURCE_REPO: IsraelDXPP/PvZ-AdvanceNT
   # vcpkg binary cache; restored/saved per-OS via actions/cache below
   VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/vcpkg-cache,readwrite
 
@@ -81,7 +81,7 @@ jobs:
       run: |
         chown -R builder:builder .
 
-    - name: Build PvZ-Portable
+    - name: Build PvZ-Advance
       run: |
         sudo -u builder bash -lc '
           mkdir build
@@ -89,14 +89,14 @@ jobs:
           cmake --build build
 
           mkdir -p dist
-          cp build/pvz-portable dist/
-          strip dist/pvz-portable
+          cp build/pvz-advance dist/
+          strip dist/pvz-advance
         '
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v7
       with:
-        name: pvz-portable-archlinux
+        name: pvz-advance-archlinux
         path: dist/
 
   build-linux-static:
@@ -299,7 +299,7 @@ jobs:
         path: ~/pvz-deps
         key: linux-static-deps-v3-${{ env.SDL2_TAG }}-${{ env.OPENMPT_TAG }}-${{ env.MPG123_VERSION }}-${{ env.LIBPNG_VERSION }}-${{ env.JPEG_TURBO_VERSION }}-${{ env.OGG_VERSION }}-${{ env.VORBIS_VERSION }}
 
-    - name: Build PvZ-Portable
+    - name: Build PvZ-Advance
       run: |
         cmake -G Ninja -B build \
           -DCMAKE_BUILD_TYPE=Release \
@@ -309,13 +309,13 @@ jobs:
         cmake --build build
 
         mkdir -p dist
-        cp build/pvz-portable dist/
-        strip dist/pvz-portable
+        cp build/pvz-advance dist/
+        strip dist/pvz-advance
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v7
       with:
-        name: pvz-portable-linux-static
+        name: pvz-advance-linux-static
         path: dist/
 
   build-windows-msys2-ucrt64:
@@ -346,7 +346,7 @@ jobs:
           mingw-w64-ucrt-x86_64-ninja
           mingw-w64-ucrt-x86_64-SDL2
 
-    - name: Compile PvZ-Portable for Windows
+    - name: Compile PvZ-Advance for Windows
       shell: msys2 {0}
       run: |
         mkdir build
@@ -354,13 +354,13 @@ jobs:
         cmake --build build
 
         mkdir -p dist
-        cp build/pvz-portable.exe dist/
-        strip dist/pvz-portable.exe
+        cp build/pvz-advance.exe dist/
+        strip dist/pvz-advance.exe
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v7
       with:
-        name: pvz-portable-windows-msys2-ucrt64
+        name: pvz-advance-windows-msys2-ucrt64
         path: dist/
 
   build-windows-msvc-x64:
@@ -400,7 +400,7 @@ jobs:
       with:
         vcpkgJsonGlob: vcpkg.json
 
-    - name: Compile PvZ-Portable for Windows (MSVC)
+    - name: Compile PvZ-Advance for Windows (MSVC)
       shell: pwsh
       run: |
         $bt = "${{ inputs.build-type || 'Release' }}"
@@ -408,14 +408,14 @@ jobs:
         cmake --build build
 
         New-Item -ItemType Directory -Force -Path dist | Out-Null
-        Copy-Item build/pvz-portable.exe dist/
+        Copy-Item build/pvz-advance.exe dist/
         # Stage PDB symbols when produced (RelWithDebInfo/Debug) for crash-dump analysis
         Copy-Item build/*.pdb dist/ -ErrorAction SilentlyContinue
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v7
       with:
-        name: pvz-portable-windows-msvc-x64
+        name: pvz-advance-windows-msvc-x64
         path: dist/
 
   build-windows-msvc-x86:
@@ -457,7 +457,7 @@ jobs:
       with:
         vcpkgJsonGlob: vcpkg.json
 
-    - name: Compile PvZ-Portable for Windows (MSVC)
+    - name: Compile PvZ-Advance for Windows (MSVC)
       shell: pwsh
       run: |
         $bt = "${{ inputs.build-type || 'Release' }}"
@@ -465,14 +465,14 @@ jobs:
         cmake --build build
 
         New-Item -ItemType Directory -Force -Path dist | Out-Null
-        Copy-Item build/pvz-portable.exe dist/
+        Copy-Item build/pvz-advance.exe dist/
         # Stage PDB symbols when produced (RelWithDebInfo/Debug) for crash-dump analysis
         Copy-Item build/*.pdb dist/ -ErrorAction SilentlyContinue
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v7
       with:
-        name: pvz-portable-windows-msvc-x86
+        name: pvz-advance-windows-msvc-x86
         path: dist/
 
   build-windows-uwp:
@@ -558,7 +558,7 @@ jobs:
       shell: pwsh
       run: |
         New-Item -ItemType Directory -Force -Path dist | Out-Null
-        Copy-Item build-uwp/pvz-portable.exe dist/
+        Copy-Item build-uwp/pvz-advance.exe dist/
         Copy-Item build-uwp/uwp/Package.appxmanifest dist/
         Copy-Item -Recurse uwp/Assets dist/Assets
         Copy-Item "build-uwp/vcpkg_installed/x64-uwp/bin/*.dll" dist/
@@ -641,20 +641,20 @@ jobs:
         }
         & $signtool.FullName sign /f sign.pfx /p $pfxPass /fd SHA256 /a $appxFile
         if ($LASTEXITCODE -ne 0) { throw "signtool sign failed" }
-        Copy-Item uwp/certs/PvZPortableDev.cer $appxDir/
+        Copy-Item uwp/certs/PvZAdvanceDev.cer $appxDir/
         Get-ChildItem $appxDir | Sort-Object Name | Select-Object Name, Length
 
     - name: Upload UWP build artifacts
       uses: actions/upload-artifact@v7
       with:
-        name: pvz-portable-uwp-x64
+        name: pvz-advance-uwp-x64
         path: dist/
         if-no-files-found: error
 
     - name: Upload signed AppX
       uses: actions/upload-artifact@v7
       with:
-        name: pvz-portable-uwp-appx
+        name: pvz-advance-uwp-appx
         path: appx/
         if-no-files-found: error
 
@@ -683,7 +683,7 @@ jobs:
           ninja \
           sdl2
 
-    - name: Build PvZ-Portable
+    - name: Build PvZ-Advance
       run: |
         mkdir build
         cmake -G Ninja -B build -DCMAKE_BUILD_TYPE=Release
@@ -691,20 +691,20 @@ jobs:
 
         mkdir -p dist
         mkdir -p dist/libs
-        cp build/pvz-portable dist/
-        strip -x dist/pvz-portable
+        cp build/pvz-advance dist/
+        strip -x dist/pvz-advance
 
         echo "Bundling dependencies..."
-        dylibbundler -of -b -x dist/pvz-portable -d dist/libs -p @executable_path/libs/
+        dylibbundler -of -b -x dist/pvz-advance -d dist/libs -p @executable_path/libs/
 
         install -m 755 "$(brew --prefix sdl3)/lib/libSDL3.dylib" dist/libs/libSDL3.dylib
 
-        codesign --force --deep -s - dist/pvz-portable
+        codesign --force --deep -s - dist/pvz-advance
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v7
       with:
-        name: pvz-portable-macos
+        name: pvz-advance-macos
         path: dist/
 
   build-android:
@@ -842,14 +842,14 @@ jobs:
 
     - name: Decode release keystore
       env:
-        PVZP_KEYSTORE_BASE64: ${{ secrets.PVZP_KEYSTORE_BASE64 }}
-        PVZP_KEYSTORE_PASSWORD: ${{ secrets.PVZP_KEYSTORE_PASSWORD }}
-        PVZP_KEY_ALIAS: ${{ secrets.PVZP_KEY_ALIAS }}
-        PVZP_KEY_PASSWORD: ${{ secrets.PVZP_KEY_PASSWORD }}
+        PVZA_KEYSTORE_BASE64: ${{ secrets.PVZA_KEYSTORE_BASE64 }}
+        PVZA_KEYSTORE_PASSWORD: ${{ secrets.PVZA_KEYSTORE_PASSWORD }}
+        PVZA_KEY_ALIAS: ${{ secrets.PVZA_KEY_ALIAS }}
+        PVZA_KEY_PASSWORD: ${{ secrets.PVZA_KEY_PASSWORD }}
       run: |
-        if [ -n "$PVZP_KEYSTORE_BASE64" ] && [ -n "$PVZP_KEYSTORE_PASSWORD" ] && [ -n "$PVZP_KEY_ALIAS" ] && [ -n "$PVZP_KEY_PASSWORD" ]; then
-          echo "$PVZP_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/pvzp-release.keystore"
-          echo "PVZP_KEYSTORE_FILE=$RUNNER_TEMP/pvzp-release.keystore" >> "$GITHUB_ENV"
+        if [ -n "$PVZA_KEYSTORE_BASE64" ] && [ -n "$PVZA_KEYSTORE_PASSWORD" ] && [ -n "$PVZA_KEY_ALIAS" ] && [ -n "$PVZA_KEY_PASSWORD" ]; then
+          echo "$PVZA_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/pvza-release.keystore"
+          echo "PVZA_KEYSTORE_FILE=$RUNNER_TEMP/pvza-release.keystore" >> "$GITHUB_ENV"
         fi
 
     - name: Setup Gradle
@@ -859,9 +859,9 @@ jobs:
 
     - name: Build APK with Gradle
       env:
-        PVZP_KEYSTORE_PASSWORD: ${{ secrets.PVZP_KEYSTORE_PASSWORD }}
-        PVZP_KEY_ALIAS: ${{ secrets.PVZP_KEY_ALIAS }}
-        PVZP_KEY_PASSWORD: ${{ secrets.PVZP_KEY_PASSWORD }}
+        PVZA_KEYSTORE_PASSWORD: ${{ secrets.PVZA_KEYSTORE_PASSWORD }}
+        PVZA_KEY_ALIAS: ${{ secrets.PVZA_KEY_ALIAS }}
+        PVZA_KEY_PASSWORD: ${{ secrets.PVZA_KEY_PASSWORD }}
       run: |
         cd android
         echo "sdk.dir=$ANDROID_HOME" > local.properties
@@ -871,12 +871,12 @@ jobs:
     - name: Copy APK
       run: |
         mkdir -p dist
-        find android -name "*.apk" -path "*/release/*" -exec cp {} dist/pvz-portable-android-arm64-v8a.apk \;
+        find android -name "*.apk" -path "*/release/*" -exec cp {} dist/pvz-advance-android-arm64-v8a.apk \;
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v7
       with:
-        name: pvz-portable-android
+        name: pvz-advance-android
         path: dist/
 
   build-android-32:
@@ -1015,14 +1015,14 @@ jobs:
 
     - name: Decode release keystore
       env:
-        PVZP_KEYSTORE_BASE64: ${{ secrets.PVZP_KEYSTORE_BASE64 }}
-        PVZP_KEYSTORE_PASSWORD: ${{ secrets.PVZP_KEYSTORE_PASSWORD }}
-        PVZP_KEY_ALIAS: ${{ secrets.PVZP_KEY_ALIAS }}
-        PVZP_KEY_PASSWORD: ${{ secrets.PVZP_KEY_PASSWORD }}
+        PVZA_KEYSTORE_BASE64: ${{ secrets.PVZA_KEYSTORE_BASE64 }}
+        PVZA_KEYSTORE_PASSWORD: ${{ secrets.PVZA_KEYSTORE_PASSWORD }}
+        PVZA_KEY_ALIAS: ${{ secrets.PVZA_KEY_ALIAS }}
+        PVZA_KEY_PASSWORD: ${{ secrets.PVZA_KEY_PASSWORD }}
       run: |
-        if [ -n "$PVZP_KEYSTORE_BASE64" ] && [ -n "$PVZP_KEYSTORE_PASSWORD" ] && [ -n "$PVZP_KEY_ALIAS" ] && [ -n "$PVZP_KEY_PASSWORD" ]; then
-          echo "$PVZP_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/pvzp-release.keystore"
-          echo "PVZP_KEYSTORE_FILE=$RUNNER_TEMP/pvzp-release.keystore" >> "$GITHUB_ENV"
+        if [ -n "$PVZA_KEYSTORE_BASE64" ] && [ -n "$PVZA_KEYSTORE_PASSWORD" ] && [ -n "$PVZA_KEY_ALIAS" ] && [ -n "$PVZA_KEY_PASSWORD" ]; then
+          echo "$PVZA_KEYSTORE_BASE64" | base64 -d > "$RUNNER_TEMP/pvza-release.keystore"
+          echo "PVZA_KEYSTORE_FILE=$RUNNER_TEMP/pvza-release.keystore" >> "$GITHUB_ENV"
         fi
 
     - name: Setup Gradle
@@ -1032,9 +1032,9 @@ jobs:
 
     - name: Build APK with Gradle
       env:
-        PVZP_KEYSTORE_PASSWORD: ${{ secrets.PVZP_KEYSTORE_PASSWORD }}
-        PVZP_KEY_ALIAS: ${{ secrets.PVZP_KEY_ALIAS }}
-        PVZP_KEY_PASSWORD: ${{ secrets.PVZP_KEY_PASSWORD }}
+        PVZA_KEYSTORE_PASSWORD: ${{ secrets.PVZA_KEYSTORE_PASSWORD }}
+        PVZA_KEY_ALIAS: ${{ secrets.PVZA_KEY_ALIAS }}
+        PVZA_KEY_PASSWORD: ${{ secrets.PVZA_KEY_PASSWORD }}
       run: |
         cd android
         echo "sdk.dir=$ANDROID_HOME" > local.properties
@@ -1044,12 +1044,12 @@ jobs:
     - name: Copy APK
       run: |
         mkdir -p dist
-        find android -name "*.apk" -path "*/release/*" -exec cp {} dist/pvz-portable-android-armeabi-v7a.apk \;
+        find android -name "*.apk" -path "*/release/*" -exec cp {} dist/pvz-advance-android-armeabi-v7a.apk \;
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v7
       with:
-        name: pvz-portable-android-32
+        name: pvz-advance-android-32
         path: dist/
 
   build-ios:
@@ -1084,7 +1084,7 @@ jobs:
       with:
         vcpkgJsonGlob: vcpkg.json
 
-    - name: Build PvZ-Portable for iOS
+    - name: Build PvZ-Advance for iOS
       run: |
         BUILD_DIR=build-ios
 
@@ -1105,26 +1105,26 @@ jobs:
 
     - name: Create unsigned IPA
       run: |
-        APP_PATH=$(find build-ios -name "pvz-portable.app" -path "*Release*" | head -1)
+        APP_PATH=$(find build-ios -name "pvz-advance.app" -path "*Release*" | head -1)
         if [ -f "build-ios/Info.plist" ]; then
           cp build-ios/Info.plist "$APP_PATH/Info.plist"
         fi
-        sed -i '' 's/\$(PRODUCT_BUNDLE_IDENTIFIER)/io.github.wszqkzqk.pvz-portable/g' "$APP_PATH/Info.plist" || true
-        sed -i '' 's/\$(EXECUTABLE_NAME)/pvz-portable/g' "$APP_PATH/Info.plist" || true
-        sed -i '' 's/\$(PRODUCT_NAME)/PvZ Portable/g' "$APP_PATH/Info.plist" || true
+        sed -i '' 's/\$(PRODUCT_BUNDLE_IDENTIFIER)/io.github.israeldxpp.pvz-advance/g' "$APP_PATH/Info.plist" || true
+        sed -i '' 's/\$(EXECUTABLE_NAME)/pvz-advance/g' "$APP_PATH/Info.plist" || true
+        sed -i '' 's/\$(PRODUCT_NAME)/PvZ Advance/g' "$APP_PATH/Info.plist" || true
 
         codesign --force --deep --sign - "$APP_PATH" || true
 
         mkdir -p dist/Payload
         cp -R "$APP_PATH" dist/Payload/
         cd dist
-        zip -r -y pvz-portable-ios-arm64.ipa Payload/
+        zip -r -y pvz-advance-ios-arm64.ipa Payload/
         rm -rf Payload
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v7
       with:
-        name: pvz-portable-ios
+        name: pvz-advance-ios
         path: dist/
 
   build-ios-ipad-mini-1:
@@ -1210,7 +1210,7 @@ jobs:
         make -j4
         make install
 
-    - name: Build PvZ-Portable for iPad mini 1 (armv7, iOS 9.0)
+    - name: Build PvZ-Advance for iPad mini 1 (armv7, iOS 9.0)
       run: |
         BUILD_DIR=build-ios-ipadmini1
 
@@ -1239,7 +1239,7 @@ jobs:
 
     - name: Create unsigned IPA for iPad mini 1
       run: |
-        APP_PATH=$(find build-ios-ipadmini1 -name "pvz-portable.app" | head -1)
+        APP_PATH=$(find build-ios-ipadmini1 -name "pvz-advance.app" | head -1)
         if [ -z "$APP_PATH" ]; then
           echo "ERROR: .app bundle not found!"
           exit 1
@@ -1247,7 +1247,7 @@ jobs:
         echo "Found app at: $APP_PATH"
 
         echo "Binary architectures:"
-        lipo -info "$APP_PATH/pvz-portable" || true
+        lipo -info "$APP_PATH/pvz-advance" || true
 
         echo "Compiling asset catalog..."
         rm -rf "$APP_PATH/Assets.xcassets"
@@ -1273,9 +1273,9 @@ jobs:
         if [ -f "build-ios-ipadmini1/Info.plist" ]; then
           cp build-ios-ipadmini1/Info.plist "$APP_PATH/Info.plist"
         fi
-        sed -i '' 's/\$(PRODUCT_BUNDLE_IDENTIFIER)/io.github.wszqkzqk.pvz-portable/g' "$APP_PATH/Info.plist" || true
-        sed -i '' 's/\$(EXECUTABLE_NAME)/pvz-portable/g' "$APP_PATH/Info.plist" || true
-        sed -i '' 's/\$(PRODUCT_NAME)/PvZ Portable/g' "$APP_PATH/Info.plist" || true
+        sed -i '' 's/\$(PRODUCT_BUNDLE_IDENTIFIER)/io.github.israeldxpp.pvz-advance/g' "$APP_PATH/Info.plist" || true
+        sed -i '' 's/\$(EXECUTABLE_NAME)/pvz-advance/g' "$APP_PATH/Info.plist" || true
+        sed -i '' 's/\$(PRODUCT_NAME)/PvZ Advance/g' "$APP_PATH/Info.plist" || true
 
         echo "Ad-hoc signing app bundle..."
         codesign --force --deep --sign - "$APP_PATH" || true
@@ -1283,13 +1283,13 @@ jobs:
         mkdir -p dist/Payload
         cp -R "$APP_PATH" dist/Payload/
         cd dist
-        zip -r -y pvz-portable-ios-armv7-ipadmini1.ipa Payload/
+        zip -r -y pvz-advance-ios-armv7-ipadmini1.ipa Payload/
         rm -rf Payload
 
     - name: Upload Artifact
       uses: actions/upload-artifact@v7
       with:
-        name: pvz-portable-ios-ipad-mini-1
+        name: pvz-advance-ios-ipad-mini-1
         path: dist/
 
   build-wasm:
@@ -1335,7 +1335,7 @@ jobs:
           EXAMPLES=0 OPENMPT123=0 TEST=0 \
           PREFIX="${SYSROOT}" install
 
-    - name: Build PvZ-Portable for WebAssembly
+    - name: Build PvZ-Advance for WebAssembly
       run: |
         mkdir build-wasm
         emcmake cmake -G Ninja -B build-wasm -DCMAKE_BUILD_TYPE=Release
@@ -1344,11 +1344,11 @@ jobs:
     - name: Upload Artifact
       uses: actions/upload-artifact@v7
       with:
-        name: pvz-portable-wasm
+        name: pvz-advance-wasm
         path: |
-          build-wasm/pvz-portable.html
-          build-wasm/pvz-portable.js
-          build-wasm/pvz-portable.wasm
+          build-wasm/pvz-advance.html
+          build-wasm/pvz-advance.js
+          build-wasm/pvz-advance.wasm
 
   build-nintendo-switch:
     name: Build for Nintendo Switch
@@ -1398,7 +1398,7 @@ jobs:
           make CONFIG=gcc SHARED_LIB=0 DYNLINK=0 EXAMPLES=0 OPENMPT123=0 TEST=0 PREFIX=$PORTLIBS_PREFIX CC="aarch64-none-elf-gcc" CXX="aarch64-none-elf-g++" install
         fi
 
-    - name: Build PvZ-Portable for Nintendo Switch
+    - name: Build PvZ-Advance for Nintendo Switch
       shell: bash
       run: |
         source $DEVKITPRO/switchvars.sh
@@ -1412,10 +1412,10 @@ jobs:
     - name: Upload Artifact
       uses: actions/upload-artifact@v7
       with:
-        name: pvz-portable-nintendo-switch
+        name: pvz-advance-nintendo-switch
         path: |
-          build-switch/pvz-portable.nro
-          build-switch/pvz-portable.elf
+          build-switch/pvz-advance.nro
+          build-switch/pvz-advance.elf
 
   build-ps4:
     name: Build for PS4 (homebrew, OpenOrbis)
@@ -1462,7 +1462,7 @@ jobs:
       if: steps.cache-ps4-deps.outputs.cache-hit != 'true'
       run: bash CMake/ps4-build-deps.sh "$RUNNER_TEMP/ps4-deps"
 
-    - name: Build PvZ-Portable for PS4
+    - name: Build PvZ-Advance for PS4
       run: |
         BT="${{ inputs.build-type || 'Release' }}"
         cmake -B build-ps4 -G Ninja \
@@ -1473,9 +1473,9 @@ jobs:
     - name: Upload Artifact
       uses: actions/upload-artifact@v7
       with:
-        name: pvz-portable-ps4
+        name: pvz-advance-ps4
         path: |
-          build-ps4/pvz-portable.elf
+          build-ps4/pvz-advance.elf
           build-ps4/pkg/eboot.bin
           build-ps4/pkg/*.pkg
           build-ps4/pkg/shaders/*.sb
@@ -1498,56 +1498,56 @@ jobs:
         mkdir release_files
 
         echo "Preparing Arch Linux file..."
-        chmod +x artifacts/pvz-portable-archlinux/pvz-portable
-        mv artifacts/pvz-portable-archlinux/pvz-portable release_files/pvz-portable-archlinux-x86_64
+        chmod +x artifacts/pvz-advance-archlinux/pvz-advance
+        mv artifacts/pvz-advance-archlinux/pvz-advance release_files/pvz-advance-archlinux-x86_64
 
         echo "Preparing Linux static file..."
-        chmod +x artifacts/pvz-portable-linux-static/pvz-portable
-        mv artifacts/pvz-portable-linux-static/pvz-portable release_files/pvz-portable-linux-static-x86_64
+        chmod +x artifacts/pvz-advance-linux-static/pvz-advance
+        mv artifacts/pvz-advance-linux-static/pvz-advance release_files/pvz-advance-linux-static-x86_64
 
         echo "Preparing Windows MSVC x64 file..."
-        mv artifacts/pvz-portable-windows-msvc-x64/pvz-portable.exe release_files/pvz-portable-windows-msvc-x64-static.exe
+        mv artifacts/pvz-advance-windows-msvc-x64/pvz-advance.exe release_files/pvz-advance-windows-msvc-x64-static.exe
 
         echo "Preparing Windows MSVC x86 file..."
-        mv artifacts/pvz-portable-windows-msvc-x86/pvz-portable.exe release_files/pvz-portable-windows-msvc-x86-static.exe
+        mv artifacts/pvz-advance-windows-msvc-x86/pvz-advance.exe release_files/pvz-advance-windows-msvc-x86-static.exe
 
         echo "Preparing Windows MSYS2 file..."
-        mv artifacts/pvz-portable-windows-msys2-ucrt64/pvz-portable.exe release_files/pvz-portable-windows-ucrt64-static.exe
+        mv artifacts/pvz-advance-windows-msys2-ucrt64/pvz-advance.exe release_files/pvz-advance-windows-ucrt64-static.exe
 
         echo "Preparing UWP file..."
-        mv artifacts/pvz-portable-uwp-appx/*.appx release_files/ 2>/dev/null || true
+        mv artifacts/pvz-advance-uwp-appx/*.appx release_files/ 2>/dev/null || true
 
         echo "Preparing macOS file..."
-        cd artifacts/pvz-portable-macos
-        chmod +x pvz-portable
-        zip -r -y ../../release_files/pvz-portable-macos-aarch64.zip .
+        cd artifacts/pvz-advance-macos
+        chmod +x pvz-advance
+        zip -r -y ../../release_files/pvz-advance-macos-aarch64.zip .
         cd ../..
 
         echo "Preparing Android file..."
-        mv artifacts/pvz-portable-android/pvz-portable-android-arm64-v8a.apk release_files/pvz-portable-android-arm64-v8a.apk
+        mv artifacts/pvz-advance-android/pvz-advance-android-arm64-v8a.apk release_files/pvz-advance-android-arm64-v8a.apk
 
         echo "Preparing Android 32-bit file..."
-        mv artifacts/pvz-portable-android-32/pvz-portable-android-armeabi-v7a.apk release_files/pvz-portable-android-armeabi-v7a.apk
+        mv artifacts/pvz-advance-android-32/pvz-advance-android-armeabi-v7a.apk release_files/pvz-advance-android-armeabi-v7a.apk
 
         echo "Preparing iOS 15 file..."
-        mv artifacts/pvz-portable-ios/pvz-portable-ios-arm64.ipa release_files/pvz-portable-ios-arm64.ipa
+        mv artifacts/pvz-advance-ios/pvz-advance-ios-arm64.ipa release_files/pvz-advance-ios-arm64.ipa
 
         echo "Preparing iOS 9 (iPad Mini 1 32-bit) file..."
-        if [ -f artifacts/pvz-portable-ios-ipad-mini-1/pvz-portable-ios-armv7-ipadmini1.ipa ]; then
-          mv artifacts/pvz-portable-ios-ipad-mini-1/pvz-portable-ios-armv7-ipadmini1.ipa release_files/pvz-portable-ios-armv7-ipadmini1.ipa
+        if [ -f artifacts/pvz-advance-ios-ipad-mini-1/pvz-advance-ios-armv7-ipadmini1.ipa ]; then
+          mv artifacts/pvz-advance-ios-ipad-mini-1/pvz-advance-ios-armv7-ipadmini1.ipa release_files/pvz-advance-ios-armv7-ipadmini1.ipa
         fi
 
         echo "Preparing WebAssembly file..."
-        cd artifacts/pvz-portable-wasm
-        zip -r ../../release_files/pvz-portable-wasm.zip .
+        cd artifacts/pvz-advance-wasm
+        zip -r ../../release_files/pvz-advance-wasm.zip .
         cd ../..
 
         echo "Preparing Nintendo Switch files..."
-        if [ -f artifacts/pvz-portable-nintendo-switch/pvz-portable.nro ]; then
-          mv artifacts/pvz-portable-nintendo-switch/pvz-portable.nro release_files/pvz-portable-nintendo-switch.nro
+        if [ -f artifacts/pvz-advance-nintendo-switch/pvz-advance.nro ]; then
+          mv artifacts/pvz-advance-nintendo-switch/pvz-advance.nro release_files/pvz-advance-nintendo-switch.nro
         fi
-        if [ -f artifacts/pvz-portable-nintendo-switch/pvz-portable.elf ]; then
-          mv artifacts/pvz-portable-nintendo-switch/pvz-portable.elf release_files/pvz-portable-nintendo-switch.elf
+        if [ -f artifacts/pvz-advance-nintendo-switch/pvz-advance.elf ]; then
+          mv artifacts/pvz-advance-nintendo-switch/pvz-advance.elf release_files/pvz-advance-nintendo-switch.elf
         fi
 
         echo "Final files:"
