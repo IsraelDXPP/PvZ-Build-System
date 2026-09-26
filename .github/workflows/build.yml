@@ -1113,6 +1113,21 @@ jobs:
         sed -i '' 's/\$(EXECUTABLE_NAME)/pvz-advance/g' "$APP_PATH/Info.plist" || true
         sed -i '' 's/\$(PRODUCT_NAME)/PvZ Advance/g' "$APP_PATH/Info.plist" || true
 
+        # Compile Assets.xcassets -> Assets.car (without this the arm64 IPA
+        # ships no icon; the armv7 job already does the equivalent below)
+        echo "Compiling asset catalog..."
+        rm -rf "$APP_PATH/Assets.xcassets"
+        xcrun actool \
+          --compile "$APP_PATH" \
+          --platform iphoneos \
+          --minimum-deployment-target 16.4 \
+          --target-device iphone \
+          --target-device ipad \
+          --app-icon AppIcon \
+          --output-format human-readable-text \
+          --output-partial-info-plist /tmp/actool-partial.plist \
+          ios/Assets.xcassets || echo "actool warning (non-fatal)"
+
         codesign --force --deep --sign - "$APP_PATH" || true
 
         mkdir -p dist/Payload
