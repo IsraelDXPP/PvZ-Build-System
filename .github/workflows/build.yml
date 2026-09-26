@@ -1128,6 +1128,10 @@ jobs:
           --output-partial-info-plist /tmp/actool-partial.plist \
           ios/Assets.xcassets || echo "actool warning (non-fatal)"
 
+        # Loose fallback for the CFBundleIconFiles entry (also what made the
+        # icon show on the armv7 build before the catalog existed here)
+        cp ios/Assets.xcassets/AppIcon.appiconset/Icon-1024.png "$APP_PATH/Icon.png" || true
+
         codesign --force --deep --sign - "$APP_PATH" || true
 
         mkdir -p dist/Payload
@@ -1276,7 +1280,7 @@ jobs:
           --output-partial-info-plist /tmp/actool-partial.plist \
           ios/Assets.xcassets || echo "actool warning (non-fatal)"
 
-        cp ios/Assets.xcassets/AppIcon.appiconset/AppIcon.png "$APP_PATH/Icon.png" || true
+        cp ios/Assets.xcassets/AppIcon.appiconset/Icon-1024.png "$APP_PATH/Icon.png" || true
 
         echo "Compiling launch screen storyboard..."
         rm -f "$APP_PATH/LaunchScreen.storyboard"
