@@ -39,7 +39,7 @@ concurrency:
 
 env:
   # CHANGE THIS to your private source repo (owner/repo format)
-  SOURCE_REPO: IsraelDXPP/PvZ-AdvanceNT
+  SOURCE_REPO: IsraelDXPP/PvZ-Advance
   # vcpkg binary cache; restored/saved per-OS via actions/cache below
   VCPKG_BINARY_SOURCES: clear;files,${{ github.workspace }}/vcpkg-cache,readwrite
 
